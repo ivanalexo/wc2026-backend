@@ -5,8 +5,10 @@ from app.schemas.prediction import (
     PredictionResponse,
     PredictionSummary,
     ShapExplanation,
+    ScoreEntryResponse,
+    ScorePredictionResponse,
 )
- 
+
 __all__ = [
     "TeamResponse",
     "TeamSummary",
@@ -16,4 +18,6 @@ __all__ = [
     "PredictionResponse",
     "PredictionSummary",
     "ShapExplanation",
+    "ScoreEntryResponse",
+    "ScorePredictionResponse",
 ]
