@@ -1,0 +1,33 @@
+# =============================================================================
+# docker-compose.yml
+# Levanta únicamente PostgreSQL para desarrollo local.
+# El backend corre directamente con uvicorn (sin Docker).
+#
+# Uso:
+#   docker compose up -d          → inicia PostgreSQL en background
+#   docker compose down           → detiene el contenedor
+#   docker compose down -v        → detiene Y elimina el volumen (borra la DB)
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: wc2026_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: wc2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wc2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    name: wc2026_postgres_data

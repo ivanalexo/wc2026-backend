@@ -1,0 +1,50 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Variables de entorno (NUNCA versionar .env real)
+.env
+.env.local
+.env.production
+
+# Artefactos ML (son grandes — gestionar con Git LFS o descargar en deploy)
+artifacts/*.pkl
+artifacts/*.csv
+
+# Base de datos local
+*.db
+*.sqlite3
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Alembic (solo versionar las migraciones, no el cache)
+migrations/__pycache__/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+logs/
