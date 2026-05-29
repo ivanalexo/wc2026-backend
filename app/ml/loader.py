@@ -24,7 +24,7 @@ CLASS_ORDER: list[str] = ['A', 'D', 'H']
 class MLArtifacts:
     # Pipelien XGBoost
     imputer: Any # Sklearn SimpleImputer
-    mode: Any # XGBClassifier entrenado
+    model: Any # XGBClassifier entrenado
     T_optimal: float # Temperatura Scaling`
     xgb_metadata: dict
 

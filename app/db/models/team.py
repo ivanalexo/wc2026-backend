@@ -11,7 +11,7 @@ class Team(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    flag_code: Mapped[str] = mapped_column(String(3), nullable=True)  # Código ISO del país para la bandera
+    flag_code: Mapped[str | None] = mapped_column(String(3), nullable=True)  # Código ISO del país para la bandera
     group: Mapped[str | None] = mapped_column(String(1))
     confederation: Mapped[str | None] = mapped_column(String(10))
     elo_rating: Mapped[float | None] = mapped_column(Float)
