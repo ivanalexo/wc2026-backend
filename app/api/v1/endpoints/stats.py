@@ -3,8 +3,89 @@ from fastapi import APIRouter, Depends
 from app.core.exceptions import PredictionUnavailableException
 from app.dependencies import get_artifacts
 from app.ml.loader import MLArtifacts
+from app.ml.predictor import resolve_team_name
 
 router = APIRouter()
+
+
+def _compute_h2h(
+    team1: str,
+    team2: str,
+    artifacts: MLArtifacts,
+) -> dict:
+    """
+    Calcula el H2H entre dos equipos desde el historial completo.
+    Los resultados son conteos reales (no ponderados por torneo).
+    Retorna None si no hay datos disponibles.
+    """
+    hist = artifacts.historical_results
+    if hist is None:
+        return None
+
+    # Filtrar todos los partidos entre los dos equipos
+    mask = (
+        ((hist["home_team"] == team1) & (hist["away_team"] == team2)) |
+        ((hist["home_team"] == team2) & (hist["away_team"] == team1))
+    )
+    matches = hist[mask].sort_values("date", ascending=False).copy()
+
+    if matches.empty:
+        return None
+
+    # Calcular W/D/L desde la perspectiva de team1
+    team1_wins = 0
+    draws      = 0
+    team2_wins = 0
+
+    for _, row in matches.iterrows():
+        result = row.get("result")
+        if result is None:
+            continue
+
+        if row["home_team"] == team1:
+            # team1 es local
+            if result == "H":
+                team1_wins += 1
+            elif result == "D":
+                draws += 1
+            else:
+                team2_wins += 1
+        else:
+            # team1 es visitante — invertimos
+            if result == "A":
+                team1_wins += 1
+            elif result == "D":
+                draws += 1
+            else:
+                team2_wins += 1
+
+    total = team1_wins + draws + team2_wins
+
+    # Últimos 5 partidos para mostrar en el frontend
+    recent = []
+    for _, row in matches.head(5).iterrows():
+        home_score = row.get("home_score")
+        away_score = row.get("away_score")
+        recent.append({
+            "date":       str(row["date"].date()) if hasattr(row["date"], "date") else str(row["date"]),
+            "home_team":  row["home_team"],
+            "away_team":  row["away_team"],
+            "home_score": int(home_score) if home_score is not None and home_score == home_score else None,
+            "away_score": int(away_score) if away_score is not None and away_score == away_score else None,
+            "tournament": row.get("tournament", ""),
+        })
+
+    return {
+        "team1":           team1,
+        "team2":           team2,
+        "total_matches":   total,
+        "team1_wins":      team1_wins,
+        "draws":           draws,
+        "team2_wins":      team2_wins,
+        "team1_win_rate":  round(team1_wins / total, 3) if total > 0 else 0.5,
+        "recent_matches":  recent,
+        "note": "Conteos históricos reales sin ponderación por torneo.",
+    }
 
 
 @router.get("/stats/h2h/{team1}/{team2}", tags=["Stats"])
@@ -14,50 +95,28 @@ def head_to_head(
     artifacts: MLArtifacts = Depends(get_artifacts),
 ):
     """
-    Retorna el historial H2H ponderado entre dos equipos extraído de los
-    features pre-computados del fixture 2026.
-    Los valores H2H fueron calculados en 02_features.py sobre todos los
-    partidos históricos previos al Mundial 2026.
+    Retorna el historial H2H entre dos equipos.
+    Funciona para CUALQUIER par — no requiere que sean del mismo grupo.
+    Incluye conteos de victorias, empates y los 5 partidos más recientes.
     """
-    fixture = artifacts.fixture_features
-
-    # Buscamos el par en cualquiera de los dos órdenes
-    mask_direct  = (fixture["home_team"] == team1) & (fixture["away_team"] == team2)
-    mask_inverse = (fixture["home_team"] == team2) & (fixture["away_team"] == team1)
-
-    row_direct  = fixture[mask_direct].head(1)
-    row_inverse = fixture[mask_inverse].head(1)
-
-    if row_direct.empty and row_inverse.empty:
+    if artifacts.historical_results is None:
         raise PredictionUnavailableException(
-            f"No hay datos H2H para '{team1}' vs '{team2}'. "
-            "Asegúrate de usar los nombres exactos del fixture."
+            "El historial de partidos no está disponible. "
+            "Copia clean_results_historical.csv a la carpeta artifacts/."
         )
 
-    # Tomamos la primera fila que encontremos y normalizamos la perspectiva
-    if not row_direct.empty:
-        row       = row_direct.iloc[0]
-        home_wins = float(row.get("h2h_home_wins", 0))
-        away_wins = float(row.get("h2h_away_wins", 0))
-    else:
-        row       = row_inverse.iloc[0]
-        # Al invertir, los roles home/away se intercambian
-        home_wins = float(row.get("h2h_away_wins", 0))
-        away_wins = float(row.get("h2h_home_wins", 0))
+    # Normalizamos nombres (case-insensitive)
+    t1 = resolve_team_name(team1, artifacts)
+    t2 = resolve_team_name(team2, artifacts)
 
-    draws = float(row.get("h2h_draws", 0))
-    total = float(row.get("h2h_total", 0))
+    if t1.lower() == t2.lower():
+        raise PredictionUnavailableException("Los dos equipos deben ser diferentes.")
 
-    return {
-        "team1": team1,
-        "team2": team2,
-        "total_matches_weighted": round(total, 2),
-        "team1_wins_weighted":    round(home_wins, 2),
-        "draws_weighted":         round(draws, 2),
-        "team2_wins_weighted":    round(away_wins, 2),
-        "team1_win_rate":         round(home_wins / total, 3) if total > 0 else 0.5,
-        "note": (
-            "Los valores son ponderados: partidos de Mayor importancia "
-            "(WC=1.0) pesan más que amistosos (0.25)."
-        ),
-    }
+    result = _compute_h2h(t1, t2, artifacts)
+
+    if result is None:
+        raise PredictionUnavailableException(
+            f"No hay partidos históricos registrados entre '{t1}' y '{t2}'."
+        )
+
+    return result

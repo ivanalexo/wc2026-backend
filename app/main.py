@@ -11,8 +11,6 @@ from app.core.exceptions import (
     app_exception_handler,
     unhandled_exception_handler,
 )
-from app.db.base import Base
-from app.db.session import engine
 from app.ml.loader import load_artifacts
 
 logging.basicConfig(
@@ -25,8 +23,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup ------------------------------------------------------------
-    logger.info("Creando tablas...")
-    Base.metadata.create_all(bind=engine)
+    # Las tablas las gestiona Alembic (alembic upgrade head).
+    # create_all fue removido intencionalmente.
 
     logger.info("Cargando artefactos ML...")
     try:

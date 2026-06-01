@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.schemas.prediction import PredictionResponse
+from app.schemas.prediction import PredictionSummary
 
 class MatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -19,4 +19,4 @@ class MatchResponse(BaseModel):
     away_score: int | None
 
 class MatchWithPrediction(MatchResponse):
-    prediction: PredictionResponse | None = None
+    prediction: PredictionSummary | None = None

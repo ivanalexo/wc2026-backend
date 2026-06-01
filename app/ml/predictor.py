@@ -1,40 +1,17 @@
-# =============================================================================
-# app/ml/predictor.py — Predicción de resultado y marcador
-# =============================================================================
-# Expone dos funciones públicas:
-#
-#   predict_match(home, away, artifacts)
-#     → XGBoost con 19 features → P(H), P(D), P(A)
-#
-#   predict_score(home, away, artifacts)
-#     → Distribución de Poisson + Monte Carlo (10,000 simulaciones)
-#       → marcador más probable + distribución de resultados exactos
-#
-# Las dos funciones son INDEPENDIENTES entre sí.
-# predict_score no invoca al modelo XGBoost — usa directamente
-# las estadísticas de ataque/defensa para estimar los λ de Poisson.
-# =============================================================================
-
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from app.ml.loader import MLArtifacts, MODEL_FEATURES, CLASS_ORDER
 
-# --- Constantes -------------------------------------------------------------
-
-# Promedio histórico de goles por equipo por partido en Mundiales (2.82 / 2)
+_FALLBACK_ELO: float = 1500.0
 _WC_GOALS_PER_TEAM: float = 1.41
-
-# Factor de ajuste Elo para el fallback de λ cuando no hay stats de ataque/defensa.
-# Con α=0.4: si elo_prob_home=0.7 → λ_home=1.63, λ_away=1.18 (total=2.82)
 _ELO_ALPHA: float = 0.4
-
 N_SIMULATIONS: int = 10_000
-TOP_SCORES: int    = 5
+TOP_SCORES: int = 5
 
 
 # =============================================================================
@@ -48,7 +25,7 @@ class MatchPrediction:
     p_home_win: float
     p_draw: float
     p_away_win: float
-    prediction: str           # H | D | A
+    prediction: str
     home_elo: float | None
     away_elo: float | None
     elo_diff: float | None
@@ -58,24 +35,41 @@ class MatchPrediction:
 
 @dataclass
 class ScoreEntry:
-    """Un marcador posible y su probabilidad estimada."""
-    score: str           # "2-1"
-    probability: float   # 0.087
+    score: str
+    probability: float
 
 
 @dataclass
 class ScorePrediction:
     home_team: str
     away_team: str
-    predicted_home_goals: int    # moda de la simulación
-    predicted_away_goals: int    # moda de la simulación
-    expected_home_goals: float   # λ_home usado
-    expected_away_goals: float   # λ_away usado
-    p_home_win: float            # P(home > away) en simulación
-    p_draw: float                # P(home == away)
-    p_away_win: float            # P(away > home)
-    top_scores: list[ScoreEntry] # los TOP_SCORES marcadores más probables
+    predicted_home_goals: int
+    predicted_away_goals: int
+    expected_home_goals: float
+    expected_away_goals: float
+    p_home_win: float
+    p_draw: float
+    p_away_win: float
+    top_scores: list[ScoreEntry]
     n_simulations: int = N_SIMULATIONS
+
+
+# =============================================================================
+# Helpers de resolución de nombres
+# =============================================================================
+
+def resolve_team_name(name: str, artifacts: MLArtifacts) -> str:
+    """
+    Convierte cualquier variante de capitalización al nombre canónico del fixture.
+    "jordan" → "Jordan"  |  "ARGENTINA" → "Argentina"  |  "saudi arabia" → "Saudi Arabia"
+    Si el nombre no existe en el mapa, lo devuelve sin cambios.
+    """
+    return artifacts.team_name_map.get(name.strip().lower(), name.strip())
+
+
+def get_team_elo(name: str, artifacts: MLArtifacts) -> float | None:
+    """Busca el Elo de un equipo de forma case-insensitive."""
+    return artifacts.team_elo.get(name.strip().lower())
 
 
 # =============================================================================
@@ -88,20 +82,17 @@ def predict_match(
     artifacts: MLArtifacts,
     is_neutral: bool = True,
 ) -> MatchPrediction | None:
-    """
-    Predice el resultado (H/D/A) con el modelo XGBoost.
-    Retorna None si no hay señal de Elo para ninguno de los dos equipos.
-    """
-    feature_row, was_inverted = _get_features(
-        home_team, away_team, artifacts, is_neutral
-    )
+    # Normalizamos nombres antes de cualquier operación
+    home = resolve_team_name(home_team, artifacts)
+    away = resolve_team_name(away_team, artifacts)
+
+    feature_row, was_inverted = _get_features(home, away, artifacts, is_neutral)
     if feature_row is None:
         return None
 
     X = pd.DataFrame([feature_row])[MODEL_FEATURES]
     X_imputed = artifacts.imputer.transform(X)
 
-    # predict_proba → [P(A), P(D), P(H)]  (ver CLASS_ORDER en loader.py)
     proba     = artifacts.model.predict_proba(X_imputed)[0]
     proba_map = dict(zip(CLASS_ORDER, proba))
 
@@ -117,13 +108,13 @@ def predict_match(
         key=lambda k: {"H": p_home_win, "D": p_draw, "A": p_away_win}[k],
     )
 
-    home_elo = artifacts.team_elo.get(home_team)
-    away_elo = artifacts.team_elo.get(away_team)
+    home_elo = get_team_elo(home, artifacts)
+    away_elo = get_team_elo(away, artifacts)
     elo_diff = (home_elo - away_elo) if (home_elo and away_elo) else None
 
     return MatchPrediction(
-        home_team=home_team,
-        away_team=away_team,
+        home_team=home,
+        away_team=away,
         p_home_win=round(p_home_win, 4),
         p_draw=round(p_draw, 4),
         p_away_win=round(p_away_win, 4),
@@ -147,36 +138,18 @@ def predict_score(
     is_neutral: bool = True,
     n_simulations: int = N_SIMULATIONS,
 ) -> ScorePrediction | None:
-    """
-    Predice el marcador más probable usando distribución de Poisson
-    simulada con Monte Carlo.
+    home = resolve_team_name(home_team, artifacts)
+    away = resolve_team_name(away_team, artifacts)
 
-    Modelo de goles esperados:
-      Si hay stats de ataque/defensa en los features pre-computados:
-        λ_home = (home_avg_gf + away_avg_ga) / 2
-        λ_away = (away_avg_gf + home_avg_ga) / 2
-      Si solo hay Elo disponible (Ruta B):
-        λ_home = WC_AVG * (1 + α * (2*elo_prob - 1))
-        λ_away = WC_AVG * (1 - α * (2*elo_prob - 1))
-
-    Retorna None si no hay señal de Elo para ninguno de los dos equipos.
-    """
-    feature_row, was_inverted = _get_features(
-        home_team, away_team, artifacts, is_neutral
-    )
+    feature_row, was_inverted = _get_features(home, away, artifacts, is_neutral)
     if feature_row is None:
         return None
 
-    # Extraemos stats desde la perspectiva CORRECTA del request.
-    # Si was_inverted, los features están en orden (away, home) del request,
-    # así que swapeamos las columnas home/away antes de calcular λ.
     home_gf, home_ga, away_gf, away_ga, elo_prob = _extract_goal_features(
         feature_row, was_inverted
     )
-
     λ_home, λ_away = _compute_lambdas(home_gf, home_ga, away_gf, away_ga, elo_prob)
 
-    # --- Simulación Monte Carlo ---------------------------------------------
     rng        = np.random.default_rng()
     home_goals = rng.poisson(λ_home, n_simulations)
     away_goals = rng.poisson(λ_away, n_simulations)
@@ -185,8 +158,6 @@ def predict_score(
     p_draw     = float((home_goals == away_goals).mean())
     p_away_win = float((home_goals < away_goals).mean())
 
-    # --- Distribución de marcadores -----------------------------------------
-    # Construimos un array de strings "h-a" y contamos frecuencias
     score_strings = np.char.add(
         np.char.add(home_goals.astype(str), "-"),
         away_goals.astype(str),
@@ -201,17 +172,13 @@ def predict_score(
         )
         for i in top_idx
     ]
-
-    # Marcador más probable (moda)
     best = top_scores[0].score.split("-")
-    predicted_home = int(best[0])
-    predicted_away = int(best[1])
 
     return ScorePrediction(
-        home_team=home_team,
-        away_team=away_team,
-        predicted_home_goals=predicted_home,
-        predicted_away_goals=predicted_away,
+        home_team=home,
+        away_team=away,
+        predicted_home_goals=int(best[0]),
+        predicted_away_goals=int(best[1]),
         expected_home_goals=round(λ_home, 2),
         expected_away_goals=round(λ_away, 2),
         p_home_win=round(p_home_win, 4),
@@ -233,9 +200,9 @@ def _get_features(
     is_neutral: bool,
 ) -> tuple[dict | None, bool]:
     """
-    Ruta A: busca el par en el fixture pre-computado (directo o invertido).
-    Ruta B: construye un vector mínimo con solo Elo si no está en el fixture.
-    Retorna (feature_dict, was_inverted).
+    Los nombres ya vienen normalizados desde predict_match / predict_score.
+    Ruta A: busca en el fixture pre-computado (directo o invertido).
+    Ruta B: construye un vector mínimo con Elo disponible.
     """
     fixture = artifacts.fixture_features
 
@@ -248,13 +215,16 @@ def _get_features(
         return _row_to_dict(row), True
 
     # Ruta B
-    home_elo = artifacts.team_elo.get(home_team)
-    away_elo = artifacts.team_elo.get(away_team)
+    home_elo_real = get_team_elo(home_team, artifacts)
+    away_elo_real = get_team_elo(away_team, artifacts)
 
-    if home_elo is None and away_elo is None:
+    if home_elo_real is None and away_elo_real is None:
         return None, False
 
-    elo_diff      = (home_elo or 0) - (away_elo or 0)
+    home_elo_val = home_elo_real if home_elo_real is not None else _FALLBACK_ELO
+    away_elo_val = away_elo_real if away_elo_real is not None else _FALLBACK_ELO
+
+    elo_diff      = home_elo_val - away_elo_val
     elo_prob_home = 1 / (1 + 10 ** (-elo_diff / 400))
 
     feature_dict = {col: np.nan for col in MODEL_FEATURES}
@@ -278,66 +248,33 @@ def _row_to_dict(row: pd.Series) -> dict:
 
 
 def _extract_goal_features(
-    features: dict,
-    was_inverted: bool,
+    features: dict, was_inverted: bool,
 ) -> tuple[float | None, float | None, float | None, float | None, float]:
-    """
-    Extrae las 4 stats de goles y elo_prob desde la perspectiva correcta del request.
-    Si was_inverted, intercambia las columnas home/away.
-    """
     def _val(key: str) -> float | None:
         v = features.get(key)
         return None if v is None or (isinstance(v, float) and np.isnan(v)) else float(v)
 
     if was_inverted:
-        home_gf    = _val("away_avg_gf")
-        home_ga    = _val("away_avg_ga")
-        away_gf    = _val("home_avg_gf")
-        away_ga    = _val("home_avg_ga")
-        elo_prob   = 1.0 - (_val("elo_prob_home") or 0.5)
-    else:
-        home_gf    = _val("home_avg_gf")
-        home_ga    = _val("home_avg_ga")
-        away_gf    = _val("away_avg_gf")
-        away_ga    = _val("away_avg_ga")
-        elo_prob   = _val("elo_prob_home") or 0.5
-
-    return home_gf, home_ga, away_gf, away_ga, elo_prob
+        return _val("away_avg_gf"), _val("away_avg_ga"), _val("home_avg_gf"), _val("home_avg_ga"), 1.0 - (_val("elo_prob_home") or 0.5)
+    return _val("home_avg_gf"), _val("home_avg_ga"), _val("away_avg_gf"), _val("away_avg_ga"), _val("elo_prob_home") or 0.5
 
 
 def _compute_lambdas(
-    home_gf: float | None,
-    home_ga: float | None,
-    away_gf: float | None,
-    away_ga: float | None,
+    home_gf: float | None, home_ga: float | None,
+    away_gf: float | None, away_ga: float | None,
     elo_prob_home: float,
 ) -> tuple[float, float]:
-    """
-    Calcula los parámetros λ de Poisson para home y away.
+    adjustment = _ELO_ALPHA * (2 * elo_prob_home - 1)
 
-    Con stats disponibles (Ruta A):
-      λ_home = (home_avg_gf + away_avg_ga) / 2
-      λ_away = (away_avg_gf + home_avg_ga) / 2
-      → Promedia la capacidad ofensiva del equipo con la vulnerabilidad defensiva del rival.
-
-    Sin stats (Ruta B, solo Elo):
-      λ_home = WC_AVG * (1 + α * (2*p - 1))
-      λ_away = WC_AVG * (1 - α * (2*p - 1))
-      → Distribuye el promedio histórico de goles según la ventaja Elo.
-      → La suma siempre es WC_GOALS_PER_TEAM * 2 = 2.82.
-    """
-    has_stats = all(v is not None for v in [home_gf, home_ga, away_gf, away_ga])
-
-    if has_stats:
-        λ_home = (home_gf + away_ga) / 2   # type: ignore[operator]
-        λ_away = (away_gf + home_ga) / 2   # type: ignore[operator]
+    if all(v is not None for v in [home_gf, home_ga, away_gf, away_ga]):
+        # Base desde stats históricas, corregida por Elo
+        λ_home_base = (home_gf + away_ga) / 2  # type: ignore[operator]
+        λ_away_base = (away_gf + home_ga) / 2  # type: ignore[operator]
+        λ_home = λ_home_base * (1 + adjustment)
+        λ_away = λ_away_base * (1 - adjustment)
     else:
-        adjustment = _ELO_ALPHA * (2 * elo_prob_home - 1)
+        # Solo Elo disponible
         λ_home = _WC_GOALS_PER_TEAM * (1 + adjustment)
         λ_away = _WC_GOALS_PER_TEAM * (1 - adjustment)
 
-    # Clamp: valores extremos arruinan la distribución Poisson
-    λ_home = float(np.clip(λ_home, 0.3, 5.0))
-    λ_away = float(np.clip(λ_away, 0.3, 5.0))
-
-    return λ_home, λ_away
+    return float(np.clip(λ_home, 0.3, 5.0)), float(np.clip(λ_away, 0.3, 5.0))

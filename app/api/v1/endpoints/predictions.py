@@ -1,81 +1,161 @@
+import math
+
+import numpy as np
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import MatchNotFoundException
-from app.db.models.match import Match
-from app.dependencies import get_db, get_artifacts, get_pagination, Pagination
+from app.core.exceptions import PredictionUnavailableException
+from app.db.models.predictions_cache import PredictionsCache
+from app.dependencies import get_db, get_artifacts
+from app.ml.explainer import explain_prediction
 from app.ml.loader import MLArtifacts
-from app.ml.predictor import predict_match
-from app.schemas import MatchWithPrediction, PredictionSummary
+from app.ml.predictor import predict_match, predict_score, resolve_team_name, get_team_elo
+from app.schemas import (
+    PredictionRequest,
+    PredictionResponse,
+    ShapExplanation,
+    ScorePredictionResponse,
+    ScoreEntryResponse,
+)
 
 router = APIRouter()
 
 
-def _build_prediction_summary(
-    home_team: str,
-    away_team: str,
-    artifacts: MLArtifacts,
-) -> PredictionSummary | None:
-    """Genera el resumen de probabilidades para embeber en cada partido."""
-    result = predict_match(home_team, away_team, artifacts)
-    if result is None:
-        return None
-    best = max(
-        {"H": result.p_home_win, "D": result.p_draw, "A": result.p_away_win},
-        key=lambda k: {"H": result.p_home_win, "D": result.p_draw, "A": result.p_away_win}[k],
+def _sanitize_for_json(d: dict) -> dict:
+    """
+    Convierte tipos numpy y NaN/Inf a tipos Python serializables por JSON.
+    """
+    result = {}
+    for k, v in d.items():
+        if isinstance(v, (np.integer,)):
+            result[k] = int(v)
+        elif isinstance(v, (np.floating,)):
+            result[k] = None if (np.isnan(v) or np.isinf(v)) else float(v)
+        elif isinstance(v, np.bool_):
+            result[k] = bool(v)
+        elif isinstance(v, float):
+            result[k] = None if (math.isnan(v) or math.isinf(v)) else v
+        else:
+            result[k] = v
+    return result
+
+
+@router.post("/predict/match", response_model=PredictionResponse, tags=["Predictions"])
+def predict_match_endpoint(
+    body: PredictionRequest,
+    db: Session = Depends(get_db),
+    artifacts: MLArtifacts = Depends(get_artifacts),
+):
+    """
+    Predice el resultado de un partido (H/D/A) usando el modelo XGBoost.
+    Los nombres de equipo son case-insensitive: "jordan" = "Jordan" = "JORDAN".
+    La predicción se cachea — el mismo par no se recalcula dos veces.
+    """
+    # Normalizamos nombres antes de consultar la caché
+    home = resolve_team_name(body.home_team, artifacts)
+    away = resolve_team_name(body.away_team, artifacts)
+
+    # --- Cache hit ----------------------------------------------------------
+    cached = (
+        db.query(PredictionsCache)
+        .filter(
+            PredictionsCache.home_team == home,
+            PredictionsCache.away_team == away,
+        )
+        .first()
     )
-    labels = {"H": "Victoria local", "D": "Empate", "A": "Victoria visitante"}
-    return PredictionSummary(
+    if cached:
+        explanation = None
+        if cached.shap_explanation:
+            explanation = ShapExplanation(**cached.shap_explanation)
+        return PredictionResponse(
+            home_team=cached.home_team,
+            away_team=cached.away_team,
+            p_home_win=cached.p_home_win,
+            p_draw=cached.p_draw,
+            p_away_win=cached.p_away_win,
+            prediction=cached.prediction,
+            home_elo=get_team_elo(home, artifacts),
+            away_elo=get_team_elo(away, artifacts),
+            elo_diff=None,
+            explanation=explanation,
+            cached=True,
+        )
+
+    # --- Predicción ---------------------------------------------------------
+    result = predict_match(home, away, artifacts)
+    if result is None:
+        raise PredictionUnavailableException(
+            f"No hay datos de Elo para '{home}' o '{away}'"
+        )
+
+    # --- Explicación SHAP ---------------------------------------------------
+    explanation = explain_prediction(
+        features=result.features,
+        prediction=result.prediction,
+        home_team=home,
+        away_team=away,
+        artifacts=artifacts,
+    )
+
+    # --- Guardar en cache ---------------------------------------------------
+    db.merge(
+        PredictionsCache(
+            home_team=home,
+            away_team=away,
+            p_home_win=result.p_home_win,
+            p_draw=result.p_draw,
+            p_away_win=result.p_away_win,
+            prediction=result.prediction,
+            features=_sanitize_for_json(result.features),
+            shap_explanation=explanation.model_dump(),
+        )
+    )
+    db.commit()
+
+    return PredictionResponse(
+        home_team=result.home_team,
+        away_team=result.away_team,
         p_home_win=result.p_home_win,
         p_draw=result.p_draw,
         p_away_win=result.p_away_win,
-        prediction=best,
-        prediction_label=labels[best],
+        prediction=result.prediction,
+        home_elo=result.home_elo,
+        away_elo=result.away_elo,
+        elo_diff=result.elo_diff,
+        explanation=explanation,
+        cached=False,
     )
 
 
-@router.get("/fixtures", response_model=list[MatchWithPrediction], tags=["Fixtures"])
-def list_fixtures(
-    group: str | None = None,
-    stage: str | None = None,
-    db: Session = Depends(get_db),
+@router.post("/predict/score", response_model=ScorePredictionResponse, tags=["Predictions"])
+def predict_score_endpoint(
+    body: PredictionRequest,
     artifacts: MLArtifacts = Depends(get_artifacts),
-    pagination: Pagination = Depends(get_pagination),
 ):
     """
-    Lista los 72 partidos del Mundial 2026 con probabilidades embebidas.
-    Filtros opcionales: group (A-L) y stage (ej: 'Group Stage').
+    Predice el marcador más probable usando Poisson + Monte Carlo.
+    Los nombres de equipo son case-insensitive.
     """
-    query = db.query(Match).order_by(Match.date)
-
-    if group:
-        query = query.filter(Match.group == group.upper())
-    if stage:
-        query = query.filter(Match.stage == stage)
-
-    matches = query.offset(pagination.skip).limit(pagination.limit).all()
-
-    return [
-        MatchWithPrediction(
-            **{c.name: getattr(m, c.name) for c in Match.__table__.columns},
-            prediction=_build_prediction_summary(m.home_team, m.away_team, artifacts),
+    result = predict_score(body.home_team, body.away_team, artifacts)
+    if result is None:
+        raise PredictionUnavailableException(
+            f"No hay datos suficientes para '{body.home_team}' vs '{body.away_team}'"
         )
-        for m in matches
-    ]
 
-
-@router.get("/fixtures/{match_id}", response_model=MatchWithPrediction, tags=["Fixtures"])
-def get_fixture(
-    match_id: int,
-    db: Session = Depends(get_db),
-    artifacts: MLArtifacts = Depends(get_artifacts),
-):
-    """Retorna el detalle de un partido con su predicción."""
-    match = db.query(Match).filter(Match.id == match_id).first()
-    if not match:
-        raise MatchNotFoundException(f"Partido con id {match_id} no encontrado")
-
-    return MatchWithPrediction(
-        **{c.name: getattr(match, c.name) for c in Match.__table__.columns},
-        prediction=_build_prediction_summary(match.home_team, match.away_team, artifacts),
+    return ScorePredictionResponse(
+        home_team=result.home_team,
+        away_team=result.away_team,
+        predicted_home_goals=result.predicted_home_goals,
+        predicted_away_goals=result.predicted_away_goals,
+        expected_home_goals=result.expected_home_goals,
+        expected_away_goals=result.expected_away_goals,
+        p_home_win=result.p_home_win,
+        p_draw=result.p_draw,
+        p_away_win=result.p_away_win,
+        top_scores=[
+            ScoreEntryResponse(score=e.score, probability=e.probability)
+            for e in result.top_scores
+        ],
+        n_simulations=result.n_simulations,
     )

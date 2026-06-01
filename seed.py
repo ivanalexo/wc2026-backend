@@ -1,11 +1,12 @@
 # =============================================================================
 # seed.py — Poblar la base de datos con equipos y partidos
 # =============================================================================
-# Ejecutar UNA sola vez (o cuando quieras resetear los datos):
+# Ejecutar desde la raíz del proyecto (wc2026-backend/):
 #   python seed.py
 #
-# Lee los archivos de artifacts/ y popula las tablas teams y matches.
-# Es idempotente: si el equipo o partido ya existe, lo omite.
+# IMPORTANTE: los 72 partidos del fixture son TODOS de fase de grupos
+# (June 11-27). Los partidos de Round of 32 en adelante no están
+# pre-determinados y se agregarán durante el torneo.
 # =============================================================================
 
 import sys
@@ -13,7 +14,6 @@ from pathlib import Path
 
 import pandas as pd
 
-# Aseguramos que Python encuentre el paquete app
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.db.base import Base
@@ -23,9 +23,102 @@ from app.db.session import SessionLocal, engine
 
 ARTIFACTS = Path("artifacts")
 
+# =============================================================================
+# Grupos oficiales — sorteo del 5 de diciembre 2025
+# Los nombres deben coincidir EXACTAMENTE con los de clean_fixture_2026.csv.
+# Si algún partido no obtiene grupo, revisa el nombre del equipo en el CSV
+# y agrega un alias en TEAM_ALIASES.
+# =============================================================================
+GROUP_MAP: dict[str, str] = {
+    # Group A
+    "Mexico":       "A",
+    "South Korea":  "A",
+    "South Africa": "A",
+    "Czech Republic": "A",
+    # Group B
+    "Canada":               "B",
+    "Switzerland":          "B",
+    "Qatar":                "B",
+    "Bosnia and Herzegovina": "B",
+    # Group C
+    "Brazil":   "C",
+    "Morocco":  "C",
+    "Scotland": "C",
+    "Haiti":    "C",
+    # Group D
+    "United States": "D",
+    "Paraguay":      "D",
+    "Australia":     "D",
+    "Turkey":        "D",
+    # Group E
+    "Germany":     "E",
+    "Curacao":     "E",
+    "Ivory Coast": "E",
+    "Ecuador":     "E",
+    # Group F
+    "Netherlands": "F",
+    "Japan":       "F",
+    "Tunisia":     "F",
+    "Sweden":      "F",
+    # Group G
+    "Belgium":     "G",
+    "Egypt":       "G",
+    "Iran":        "G",
+    "New Zealand": "G",
+    # Group H
+    "Spain":        "H",
+    "Cape Verde":   "H",
+    "Saudi Arabia": "H",
+    "Uruguay":      "H",
+    # Group I
+    "France":  "I",
+    "Senegal": "I",
+    "Norway":  "I",
+    "Iraq":    "I",
+    # Group J
+    "Argentina": "J",
+    "Algeria":   "J",
+    "Austria":   "J",
+    "Jordan":    "J",
+    # Group K
+    "Portugal":   "K",
+    "Colombia":   "K",
+    "Uzbekistan": "K",
+    "DR Congo":   "K",
+    # Group L
+    "England": "L",
+    "Croatia": "L",
+    "Ghana":   "L",
+    "Panama":  "L",
+}
+
+# Aliases para nombres alternativos que pueden aparecer en el dataset
+TEAM_ALIASES: dict[str, str] = {
+    "USA":                    "United States",
+    "Czechia":                "Czech Republic",
+    "Bosnia-Herzegovina":     "Bosnia and Herzegovina",
+    "Curaçao":                "Curacao",
+    "Côte d'Ivoire":          "Ivory Coast",
+    "Cabo Verde":             "Cape Verde",
+    "Türkiye":                "Turkey",
+    "Korea Republic":         "South Korea",
+    "Republic of Korea":      "South Korea",
+    "Congo DR":               "DR Congo",
+    "Democratic Republic of Congo": "DR Congo",
+}
+
+
+def resolve_team(name: str) -> str:
+    """Devuelve el nombre canónico del equipo resolviendo aliases."""
+    return TEAM_ALIASES.get(name, name)
+
+
+def get_group(team_name: str) -> str | None:
+    canonical = resolve_team(team_name)
+    return GROUP_MAP.get(canonical)
+
 
 def slugify(name: str) -> str:
-    """Convierte 'Saudi Arabia' → 'saudi-arabia'."""
     return (
         name.lower()
         .replace(" ", "-")
@@ -33,11 +126,21 @@ def slugify(name: str) -> str:
         .replace("'", "")
         .replace("(", "")
         .replace(")", "")
+        .replace("ç", "c")
+        .replace("ü", "u")
+        .replace("é", "e")
+        .replace("ô", "o")
     )
 
 
+# =============================================================================
+# Seeders
+# =============================================================================
+
 def seed_teams(db, fixture: pd.DataFrame) -> None:
-    """Extrae equipos únicos del fixture con su Elo promedio."""
+    """
+    Extrae los 48 equipos del fixture, asigna Elo promedio y grupo.
+    """
     home = fixture[["home_team", "home_elo"]].rename(
         columns={"home_team": "team", "home_elo": "elo"}
     )
@@ -53,80 +156,116 @@ def seed_teams(db, fixture: pd.DataFrame) -> None:
         .sort_values("elo", ascending=False)
     )
 
-    added = 0
+    added = updated = skipped = 0
     for _, row in team_elos.iterrows():
-        exists = db.query(Team).filter(Team.name == row["team"]).first()
-        if not exists:
-            db.add(
-                Team(
-                    name=row["team"],
-                    slug=slugify(row["team"]),
-                    elo_rating=round(float(row["elo"]), 1),
-                )
-            )
+        name  = row["team"]
+        group = get_group(name)
+
+        existing = db.query(Team).filter(Team.name == name).first()
+        if existing:
+            # Actualizamos el grupo si no lo tenía
+            if existing.group is None and group:
+                existing.group = group
+                updated += 1
+            else:
+                skipped += 1
+        else:
+            db.add(Team(
+                name=name,
+                slug=slugify(name),
+                elo_rating=round(float(row["elo"]), 1),
+                group=group,
+            ))
             added += 1
 
     db.commit()
-    print(f"  Teams: {added} nuevos / {len(team_elos) - added} ya existían")
+    print(f"  Teams  → {added} nuevos | {updated} actualizados | {skipped} sin cambios")
 
 
 def seed_matches(db, clean_fixture: pd.DataFrame) -> None:
-    """Popula la tabla matches con el fixture original (tiene city y country)."""
-    added = 0
+    """
+    Popula la tabla matches. Todos los 72 partidos son 'Group Stage'.
+    El grupo se deriva del GROUP_MAP usando home_team.
+    """
+    added = updated = skipped = 0
+    no_group = []
+
     for _, row in clean_fixture.iterrows():
-        exists = (
+        home  = row["home_team"]
+        away  = row["away_team"]
+        group = get_group(home) or get_group(away)
+
+        if group is None:
+            no_group.append(f"{home} vs {away}")
+
+        existing = (
             db.query(Match)
             .filter(
-                Match.home_team == row["home_team"],
-                Match.away_team == row["away_team"],
+                Match.home_team == home,
+                Match.away_team == away,
                 Match.date == row["date"],
             )
             .first()
         )
-        if not exists:
-            db.add(
-                Match(
-                    home_team=row["home_team"],
-                    away_team=row["away_team"],
-                    date=row["date"],
-                    city=row.get("city"),
-                    country=row.get("country"),
-                    # stage y group se pueden completar manualmente después
-                )
-            )
+
+        if existing:
+            if existing.stage is None or existing.group is None:
+                existing.stage = "Group Stage"
+                existing.group = group
+                updated += 1
+            else:
+                skipped += 1
+        else:
+            db.add(Match(
+                home_team=home,
+                away_team=away,
+                date=row["date"],
+                city=row.get("city"),
+                country=row.get("country"),
+                stage="Group Stage",
+                group=group,
+            ))
             added += 1
 
     db.commit()
-    print(f"  Matches: {added} nuevos / {len(clean_fixture) - added} ya existían")
+    print(f"  Matches → {added} nuevos | {updated} actualizados | {skipped} sin cambios")
 
+    if no_group:
+        print(f"\n  ⚠️  {len(no_group)} partido(s) sin grupo asignado:")
+        for m in no_group:
+            print(f"     {m}")
+        print("  → Verifica los nombres en GROUP_MAP o agrega un alias en TEAM_ALIASES.")
+
+
+# =============================================================================
+# Main
+# =============================================================================
 
 def main() -> None:
-    print("Creando tablas si no existen...")
+    print("Verificando tablas...")
     Base.metadata.create_all(bind=engine)
 
-    # Verificamos que los archivos necesarios existan
     master_path = ARTIFACTS / "master_fixture_2026.csv"
     clean_path  = ARTIFACTS / "clean_fixture_2026.csv"
 
     missing = [p for p in [master_path, clean_path] if not p.exists()]
     if missing:
-        print("ERROR — faltan estos archivos en artifacts/:")
+        print("ERROR — faltan archivos en artifacts/:")
         for p in missing:
             print(f"  {p}")
-        print("\nCópialos desde los outputs de las Fases 1-2.")
         sys.exit(1)
 
     print("Leyendo fixtures...")
     master_fixture = pd.read_csv(master_path, parse_dates=["date"])
     clean_fixture  = pd.read_csv(clean_path,  parse_dates=["date"])
 
-    # Filtramos solo los partidos del Mundial 2026
     clean_wc = clean_fixture[
         clean_fixture["tournament"] == "FIFA World Cup"
     ].copy()
 
-    print(f"  master_fixture_2026: {len(master_fixture)} filas")
-    print(f"  clean_fixture_2026 (WC only): {len(clean_wc)} filas")
+    print(f"  master_fixture_2026 : {len(master_fixture)} partidos")
+    print(f"  clean_fixture (WC)  : {len(clean_wc)} partidos")
+    print(f"  Todos son 'Group Stage' (June 11-27)")
 
     with SessionLocal() as db:
         print("\nSeeding teams...")
@@ -136,7 +275,8 @@ def main() -> None:
         seed_matches(db, clean_wc)
 
     print("\n✅ Seeding completado.")
-    print("   Próximo paso: copia los .pkl a artifacts/ y corre uvicorn.")
+    print("   Teams y matches tienen stage='Group Stage' y group asignado.")
+    print("   Los partidos de Round of 32 en adelante se agregarán durante el torneo.")
 
 
 if __name__ == "__main__":
