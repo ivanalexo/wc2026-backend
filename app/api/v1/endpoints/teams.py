@@ -1,7 +1,6 @@
 import time
 import logging
 
-import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -47,7 +46,7 @@ def get_team(slug: str, db: Session = Depends(get_db)):
 @router.get("/teams/{slug}/squad", tags=["Teams"])
 def get_squad(slug: str, db: Session = Depends(get_db)):
     """
-    Retorna el plantel del equipo consumiendo football-data.org.
+    Retorna el plantel del equipo consumiendo por un endpoint externo.
     La respuesta se cachea en memoria por 24 horas.
     Requiere la variable de entorno FOOTBALL_DATA_API_KEY.
     """
@@ -69,9 +68,6 @@ def get_squad(slug: str, db: Session = Depends(get_db)):
     if cached and (time.time() - cached[0]) < _SQUAD_CACHE_TTL:
         return {"team": team.name, "squad": cached[1], "cached": True}
 
-    # La integración con football-data.org requiere mapear
-    # el slug del equipo a su ID en esa API.
-    # Por ahora retornamos un placeholder hasta tener el mapa completo.
     # TODO: implementar _get_fd_team_id(slug) con el mapa de IDs.
     return {
         "team": team.name,

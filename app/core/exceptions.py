@@ -1,20 +1,3 @@
-# =============================================================================
-# app/core/exceptions.py — Excepciones personalizadas y handlers HTTP
-# =============================================================================
-# Define dos cosas:
-#
-#   1. Clases de excepción propias del dominio (TeamNotFound, etc.)
-#      Los servicios y endpoints las lanzan sin saber nada de HTTP.
-#
-#   2. Handlers que FastAPI registra en main.py.
-#      Convierten cada excepción en una JSONResponse con el status code
-#      y el cuerpo correcto. El frontend siempre recibe JSON, nunca HTML.
-#
-# Registro en main.py:
-#   app.add_exception_handler(TeamNotFoundException, team_not_found_handler)
-#   app.add_exception_handler(Exception, unhandled_exception_handler)
-# =============================================================================
-
 import logging
 
 from fastapi import Request

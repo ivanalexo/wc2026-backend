@@ -32,7 +32,6 @@ def _compute_h2h(
     if matches.empty:
         return None
 
-    # Calcular W/D/L desde la perspectiva de team1
     team1_wins = 0
     draws      = 0
     team2_wins = 0
@@ -51,7 +50,6 @@ def _compute_h2h(
             else:
                 team2_wins += 1
         else:
-            # team1 es visitante — invertimos
             if result == "A":
                 team1_wins += 1
             elif result == "D":
@@ -96,7 +94,6 @@ def head_to_head(
 ):
     """
     Retorna el historial H2H entre dos equipos.
-    Funciona para CUALQUIER par — no requiere que sean del mismo grupo.
     Incluye conteos de victorias, empates y los 5 partidos más recientes.
     """
     if artifacts.historical_results is None:
@@ -105,7 +102,6 @@ def head_to_head(
             "Copia clean_results_historical.csv a la carpeta artifacts/."
         )
 
-    # Normalizamos nombres (case-insensitive)
     t1 = resolve_team_name(team1, artifacts)
     t2 = resolve_team_name(team2, artifacts)
 

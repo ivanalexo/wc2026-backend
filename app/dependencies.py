@@ -1,33 +1,11 @@
-# =============================================================================
-# app/dependencies.py — Dependencias compartidas entre endpoints
-# =============================================================================
-# Uso en cualquier endpoint:
-#
-#   from app.dependencies import get_db, get_artifacts, Pagination
-#
-#   @router.get("/fixtures")
-#   def list_fixtures(
-#       db: Session = Depends(get_db),
-#       artifacts: MLArtifacts = Depends(get_artifacts),
-#       pagination: Pagination = Depends(get_pagination),
-#   ): ...
-#
-# FastAPI resuelve cada Depends() una vez por request y gestiona el ciclo
-# de vida (por ejemplo, cierra la sesión de DB al finalizar el request).
-# =============================================================================
-
 from dataclasses import dataclass
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db          # re-exportamos para import único
+from app.db.session import get_db
 from app.ml.loader import MLArtifacts
 
-
-# =============================================================================
-# Dependencia ML — artefactos cargados al startup
-# =============================================================================
 
 def get_artifacts(request: Request) -> MLArtifacts:
     """
@@ -40,11 +18,6 @@ def get_artifacts(request: Request) -> MLArtifacts:
     entre todos los requests sin reinicialización.
     """
     return request.app.state.artifacts
-
-
-# =============================================================================
-# Dependencia de paginación — para endpoints que listan colecciones
-# =============================================================================
 
 @dataclass
 class Pagination:
@@ -61,15 +34,9 @@ def get_pagination(skip: int = 0, limit: int = 50) -> Pagination:
     return Pagination(skip=skip, limit=min(limit, 100))
 
 
-# =============================================================================
-# Stub de autenticación — se implementa en Fase 4
-# =============================================================================
-# Se define ahora para que los endpoints que lo necesitarán en Fase 4
-# puedan importarlo desde ya, evitando cambiar sus firmas después.
-
 def get_current_user():
     """
-    Fase 4: verificará el JWT del header Authorization y retornará
+    verificará el JWT del header Authorization y retornará
     el usuario autenticado. Por ahora no hace nada.
     """
     pass

@@ -1,7 +1,3 @@
-# =============================================================================
-# app/schemas/prediction.py
-# =============================================================================
-
 from pydantic import BaseModel, ConfigDict, computed_field, model_validator
 
 _PREDICTION_LABELS = {
@@ -9,11 +5,6 @@ _PREDICTION_LABELS = {
     "D": "Empate",
     "A": "Victoria visitante",
 }
-
-
-# =============================================================================
-# Schemas de resultado (H/D/A) — alimentados por XGBoost
-# =============================================================================
 
 class ShapExplanation(BaseModel):
     main_factor: str
@@ -60,11 +51,6 @@ class PredictionResponse(BaseModel):
         if abs(total - 1.0) > 0.01:
             raise ValueError(f"Las probabilidades deben sumar 1.0, suman {total}")
         return self
-
-
-# =============================================================================
-# Schemas de marcador — alimentados por Poisson + Monte Carlo
-# =============================================================================
 
 class ScoreEntryResponse(BaseModel):
     """Un marcador posible con su probabilidad estimada."""

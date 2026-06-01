@@ -36,8 +36,6 @@ class MLArtifacts:
     team_elo: dict[str, float]
     team_name_map: dict[str, str]
 
-    # Historial completo de partidos internacionales para H2H entre cualquier par.
-    # Es None si clean_results_historical.csv no está en artifacts/ (no rompe el startup).
     historical_results: pd.DataFrame | None
 
 
@@ -95,7 +93,6 @@ def load_artifacts() -> MLArtifacts:
 
     team_elo, team_name_map = _build_team_lookups(fixture_features)
 
-    # Historial completo — opcional, no rompe el startup si no existe
     hist_path = base / "clean_results_historical.csv"
     if hist_path.exists():
         historical_results = pd.read_csv(hist_path, parse_dates=["date"])

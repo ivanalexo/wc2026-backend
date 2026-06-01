@@ -13,11 +13,6 @@ _ELO_ALPHA: float = 0.4
 N_SIMULATIONS: int = 10_000
 TOP_SCORES: int = 5
 
-
-# =============================================================================
-# Dataclasses de retorno
-# =============================================================================
-
 @dataclass
 class MatchPrediction:
     home_team: str
@@ -53,11 +48,6 @@ class ScorePrediction:
     top_scores: list[ScoreEntry]
     n_simulations: int = N_SIMULATIONS
 
-
-# =============================================================================
-# Helpers de resolución de nombres
-# =============================================================================
-
 def resolve_team_name(name: str, artifacts: MLArtifacts) -> str:
     """
     Convierte cualquier variante de capitalización al nombre canónico del fixture.
@@ -70,11 +60,6 @@ def resolve_team_name(name: str, artifacts: MLArtifacts) -> str:
 def get_team_elo(name: str, artifacts: MLArtifacts) -> float | None:
     """Busca el Elo de un equipo de forma case-insensitive."""
     return artifacts.team_elo.get(name.strip().lower())
-
-
-# =============================================================================
-# predict_match — XGBoost
-# =============================================================================
 
 def predict_match(
     home_team: str,
@@ -125,11 +110,6 @@ def predict_match(
         features=feature_row,
         was_inverted=was_inverted,
     )
-
-
-# =============================================================================
-# predict_score — Poisson + Monte Carlo
-# =============================================================================
 
 def predict_score(
     home_team: str,
@@ -187,11 +167,6 @@ def predict_score(
         top_scores=top_scores,
         n_simulations=n_simulations,
     )
-
-
-# =============================================================================
-# Helpers privados
-# =============================================================================
 
 def _get_features(
     home_team: str,
@@ -267,7 +242,6 @@ def _compute_lambdas(
     adjustment = _ELO_ALPHA * (2 * elo_prob_home - 1)
 
     if all(v is not None for v in [home_gf, home_ga, away_gf, away_ga]):
-        # Base desde stats históricas, corregida por Elo
         λ_home_base = (home_gf + away_ga) / 2  # type: ignore[operator]
         λ_away_base = (away_gf + home_ga) / 2  # type: ignore[operator]
         λ_home = λ_home_base * (1 + adjustment)

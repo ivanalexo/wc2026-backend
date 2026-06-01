@@ -48,14 +48,11 @@ def predict_match_endpoint(
 ):
     """
     Predice el resultado de un partido (H/D/A) usando el modelo XGBoost.
-    Los nombres de equipo son case-insensitive: "jordan" = "Jordan" = "JORDAN".
     La predicción se cachea — el mismo par no se recalcula dos veces.
     """
-    # Normalizamos nombres antes de consultar la caché
     home = resolve_team_name(body.home_team, artifacts)
     away = resolve_team_name(body.away_team, artifacts)
 
-    # --- Cache hit ----------------------------------------------------------
     cached = (
         db.query(PredictionsCache)
         .filter(
@@ -82,14 +79,12 @@ def predict_match_endpoint(
             cached=True,
         )
 
-    # --- Predicción ---------------------------------------------------------
     result = predict_match(home, away, artifacts)
     if result is None:
         raise PredictionUnavailableException(
             f"No hay datos de Elo para '{home}' o '{away}'"
         )
 
-    # --- Explicación SHAP ---------------------------------------------------
     explanation = explain_prediction(
         features=result.features,
         prediction=result.prediction,
@@ -98,7 +93,6 @@ def predict_match_endpoint(
         artifacts=artifacts,
     )
 
-    # --- Guardar en cache ---------------------------------------------------
     db.merge(
         PredictionsCache(
             home_team=home,
@@ -135,7 +129,6 @@ def predict_score_endpoint(
 ):
     """
     Predice el marcador más probable usando Poisson + Monte Carlo.
-    Los nombres de equipo son case-insensitive.
     """
     result = predict_score(body.home_team, body.away_team, artifacts)
     if result is None:

@@ -8,11 +8,6 @@ router = APIRouter()
 
 @router.get("/health", tags=["Health"])
 def health_check(request: Request) -> dict:
-    """
-    Verifica el estado de los tres componentes críticos:
-    la API, la base de datos y los artefactos ML.
-    """
-    # --- Base de datos ------------------------------------------------------
     db_status = "ok"
     try:
         with SessionLocal() as db:
@@ -20,7 +15,6 @@ def health_check(request: Request) -> dict:
     except Exception:
         db_status = "unavailable"
 
-    # --- Artefactos ML ------------------------------------------------------
     artifacts = getattr(request.app.state, "artifacts", None)
     ml_status = "ok" if artifacts is not None else "unavailable"
 

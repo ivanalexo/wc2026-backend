@@ -22,9 +22,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- Startup ------------------------------------------------------------
-    # Las tablas las gestiona Alembic (alembic upgrade head).
-    # create_all fue removido intencionalmente.
 
     logger.info("Cargando artefactos ML...")
     try:
@@ -37,7 +34,6 @@ async def lifespan(app: FastAPI):
     app.state.squad_cache = {}
 
     yield
-    # --- Shutdown -----------------------------------------------------------
     logger.info("Apagando la aplicación.")
 
 
