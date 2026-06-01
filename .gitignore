@@ -20,10 +20,6 @@ build/
 .env.local
 .env.production
 
-# Artefactos ML (son grandes — gestionar con Git LFS o descargar en deploy)
-artifacts/*.pkl
-artifacts/*.csv
-
 # Base de datos local
 *.db
 *.sqlite3
