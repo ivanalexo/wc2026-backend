@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -9,7 +10,7 @@ from app.ml.loader import MLArtifacts, MODEL_FEATURES, CLASS_ORDER
 
 _FALLBACK_ELO: float = 1500.0
 _WC_GOALS_PER_TEAM: float = 1.41
-_ELO_ALPHA: float = 0.4
+_MAX_GOALS_ANALYTIC: int = 15   # techo para la suma exacta de Poisson
 N_SIMULATIONS: int = 10_000
 TOP_SCORES: int = 5
 
@@ -49,11 +50,7 @@ class ScorePrediction:
     n_simulations: int = N_SIMULATIONS
 
 def resolve_team_name(name: str, artifacts: MLArtifacts) -> str:
-    """
-    Convierte cualquier variante de capitalización al nombre canónico del fixture.
-    "jordan" → "Jordan"  |  "ARGENTINA" → "Argentina"  |  "saudi arabia" → "Saudi Arabia"
-    Si el nombre no existe en el mapa, lo devuelve sin cambios.
-    """
+    """Convierte cualquier variante al nombre canónico del fixture."""
     return artifacts.team_name_map.get(name.strip().lower(), name.strip())
 
 
@@ -67,7 +64,6 @@ def predict_match(
     artifacts: MLArtifacts,
     is_neutral: bool = True,
 ) -> MatchPrediction | None:
-    # Normalizamos nombres antes de cualquier operación
     home = resolve_team_name(home_team, artifacts)
     away = resolve_team_name(away_team, artifacts)
 
@@ -125,10 +121,19 @@ def predict_score(
     if feature_row is None:
         return None
 
-    home_gf, home_ga, away_gf, away_ga, elo_prob = _extract_goal_features(
-        feature_row, was_inverted
+    match_pred = predict_match(home, away, artifacts, is_neutral)
+    if match_pred is None:
+        return None
+
+    home_gf, home_ga, away_gf, away_ga = _extract_goal_stats(
+        feature_row, was_inverted, home, away, artifacts
     )
-    λ_home, λ_away = _compute_lambdas(home_gf, home_ga, away_gf, away_ga, elo_prob)
+    λ_home_base, λ_away_base = _compute_base_lambdas(home_gf, home_ga, away_gf, away_ga)
+
+    λ_home, λ_away = _calibrate_lambdas(
+        λ_home_base, λ_away_base,
+        match_pred.p_home_win, match_pred.p_draw, match_pred.p_away_win,
+    )
 
     rng        = np.random.default_rng()
     home_goals = rng.poisson(λ_home, n_simulations)
@@ -168,17 +173,138 @@ def predict_score(
         n_simulations=n_simulations,
     )
 
+def _poisson_win_probs(
+    λ_home: float,
+    λ_away: float,
+    max_goals: int = _MAX_GOALS_ANALYTIC,
+) -> tuple[float, float, float]:
+    """
+    Calcula P(home win), P(draw), P(away win) de forma exacta
+    a partir de las PMF de Poisson.  Sin dependencias de scipy.
+    """
+    exp_h = math.exp(-λ_home)
+    exp_a = math.exp(-λ_away)
+
+    pmf_h = [exp_h * (λ_home ** k) / math.factorial(k) for k in range(max_goals + 1)]
+    pmf_a = [exp_a * (λ_away ** k) / math.factorial(k) for k in range(max_goals + 1)]
+
+    p_home_win = p_draw = p_away_win = 0.0
+    for h, ph in enumerate(pmf_h):
+        for a, pa in enumerate(pmf_a):
+            prob = ph * pa
+            if   h > a: p_home_win += prob
+            elif h == a: p_draw    += prob
+            else:        p_away_win += prob
+
+    return p_home_win, p_draw, p_away_win
+
+
+def _calibrate_lambdas(
+    λ_home_base: float,
+    λ_away_base: float,
+    target_p_home: float,
+    target_p_draw: float,
+    target_p_away: float,
+    max_iter: int = 64,
+    tol: float = 1e-6,
+) -> tuple[float, float]:
+
+    λ_total = λ_home_base + λ_away_base
+
+    # Empate dominante → lambdas iguales
+    if target_p_draw >= target_p_home and target_p_draw >= target_p_away:
+        half = float(np.clip(λ_total / 2.0, 0.3, 5.0))
+        return half, half
+
+    # Bisección sobre la fracción de goles del local
+    lo, hi = 0.01, 0.99
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2.0
+        p_hw, _, _ = _poisson_win_probs(λ_total * mid, λ_total * (1.0 - mid))
+        if abs(p_hw - target_p_home) < tol:
+            break
+        if p_hw < target_p_home:
+            lo = mid
+        else:
+            hi = mid
+
+    frac  = (lo + hi) / 2.0
+    λ_home = float(np.clip(λ_total * frac,          0.3, 5.0))
+    λ_away = float(np.clip(λ_total * (1.0 - frac),  0.3, 5.0))
+    return λ_home, λ_away
+
+def _extract_goal_stats(
+    features: dict,
+    was_inverted: bool,
+    home: str,
+    away: str,
+    artifacts: MLArtifacts,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """
+    Devuelve (home_gf, home_ga, away_gf, away_ga).
+
+    Prioridad:
+    1. team_goals (del dataset de goalscorers) si está disponible en artifacts.
+    2. Promedios pre-computados del fixture (home_avg_gf, etc.).
+    """
+    def _feat(key: str) -> float | None:
+        v = features.get(key)
+        return None if v is None or (isinstance(v, float) and np.isnan(v)) else float(v)
+
+    team_goals: dict = getattr(artifacts, "team_goals", {}) or {}
+
+    if team_goals:
+        home_key = home.strip().lower()
+        away_key = away.strip().lower()
+
+        home_stats = team_goals.get(home_key)
+        away_stats = team_goals.get(away_key)
+
+        home_gf = home_stats.avg_gf if home_stats else None
+        home_ga = home_stats.avg_ga if home_stats else None
+        away_gf = away_stats.avg_gf if away_stats else None
+        away_ga = away_stats.avg_ga if away_stats else None
+
+        if all(v is not None for v in [home_gf, home_ga, away_gf, away_ga]):
+            if was_inverted:
+                return away_gf, away_ga, home_gf, home_ga  # type: ignore[return-value]
+            return home_gf, home_ga, away_gf, away_ga      # type: ignore[return-value]
+
+    if was_inverted:
+        return _feat("away_avg_gf"), _feat("away_avg_ga"), _feat("home_avg_gf"), _feat("home_avg_ga")
+    return _feat("home_avg_gf"), _feat("home_avg_ga"), _feat("away_avg_gf"), _feat("away_avg_ga")
+
+
+def _compute_base_lambdas(
+    home_gf: float | None,
+    home_ga: float | None,
+    away_gf: float | None,
+    away_ga: float | None,
+) -> tuple[float, float]:
+    """
+    Lambdas base a partir de promedios de goles.
+    No incluye ajuste ELO
+    """
+    if all(v is not None for v in [home_gf, home_ga, away_gf, away_ga]):
+        λ_home = (home_gf + away_ga) / 2   # type: ignore[operator]
+        λ_away = (away_gf + home_ga) / 2   # type: ignore[operator]
+    else:
+        λ_home = _WC_GOALS_PER_TEAM
+        λ_away = _WC_GOALS_PER_TEAM
+
+    return float(np.clip(λ_home, 0.3, 5.0)), float(np.clip(λ_away, 0.3, 5.0))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature lookup  (sin cambios)
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _get_features(
     home_team: str,
     away_team: str,
     artifacts: MLArtifacts,
     is_neutral: bool,
 ) -> tuple[dict | None, bool]:
-    """
-    Los nombres ya vienen normalizados desde predict_match / predict_score.
-    Ruta A: busca en el fixture pre-computado (directo o invertido).
-    Ruta B: construye un vector mínimo con Elo disponible.
-    """
     fixture = artifacts.fixture_features
 
     row = _lookup_fixture(fixture, home_team, away_team)
@@ -189,7 +315,6 @@ def _get_features(
     if row is not None:
         return _row_to_dict(row), True
 
-    # Ruta B
     home_elo_real = get_team_elo(home_team, artifacts)
     away_elo_real = get_team_elo(away_team, artifacts)
 
@@ -210,9 +335,7 @@ def _get_features(
     return feature_dict, False
 
 
-def _lookup_fixture(
-    fixture: pd.DataFrame, home: str, away: str
-) -> pd.Series | None:
+def _lookup_fixture(fixture: pd.DataFrame, home: str, away: str) -> pd.Series | None:
     mask = (fixture["home_team"] == home) & (fixture["away_team"] == away)
     rows = fixture[mask]
     return rows.iloc[0] if len(rows) > 0 else None
@@ -220,35 +343,3 @@ def _lookup_fixture(
 
 def _row_to_dict(row: pd.Series) -> dict:
     return {col: row[col] if col in row.index else np.nan for col in MODEL_FEATURES}
-
-
-def _extract_goal_features(
-    features: dict, was_inverted: bool,
-) -> tuple[float | None, float | None, float | None, float | None, float]:
-    def _val(key: str) -> float | None:
-        v = features.get(key)
-        return None if v is None or (isinstance(v, float) and np.isnan(v)) else float(v)
-
-    if was_inverted:
-        return _val("away_avg_gf"), _val("away_avg_ga"), _val("home_avg_gf"), _val("home_avg_ga"), 1.0 - (_val("elo_prob_home") or 0.5)
-    return _val("home_avg_gf"), _val("home_avg_ga"), _val("away_avg_gf"), _val("away_avg_ga"), _val("elo_prob_home") or 0.5
-
-
-def _compute_lambdas(
-    home_gf: float | None, home_ga: float | None,
-    away_gf: float | None, away_ga: float | None,
-    elo_prob_home: float,
-) -> tuple[float, float]:
-    adjustment = _ELO_ALPHA * (2 * elo_prob_home - 1)
-
-    if all(v is not None for v in [home_gf, home_ga, away_gf, away_ga]):
-        λ_home_base = (home_gf + away_ga) / 2  # type: ignore[operator]
-        λ_away_base = (away_gf + home_ga) / 2  # type: ignore[operator]
-        λ_home = λ_home_base * (1 + adjustment)
-        λ_away = λ_away_base * (1 - adjustment)
-    else:
-        # Solo Elo disponible
-        λ_home = _WC_GOALS_PER_TEAM * (1 + adjustment)
-        λ_away = _WC_GOALS_PER_TEAM * (1 - adjustment)
-
-    return float(np.clip(λ_home, 0.3, 5.0)), float(np.clip(λ_away, 0.3, 5.0))

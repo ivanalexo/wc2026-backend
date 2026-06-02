@@ -1,5 +1,6 @@
+import logging
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,9 @@ import pandas as pd
 import shap
 
 from app.config import settings
+from app.ml.goals_stats import build_team_goals_lookup, TeamGoalStats
+
+_log = logging.getLogger(__name__)
 
 MODEL_FEATURES: list[str] = [
     "elo_diff", "elo_prob_home",
@@ -37,6 +41,7 @@ class MLArtifacts:
     team_name_map: dict[str, str]
 
     historical_results: pd.DataFrame | None
+    team_goals: dict[str, TeamGoalStats] = field(default_factory=dict)
 
 
 def _patch_imputer(imputer: Any) -> Any:
@@ -97,12 +102,20 @@ def load_artifacts() -> MLArtifacts:
     if hist_path.exists():
         historical_results = pd.read_csv(hist_path, parse_dates=["date"])
     else:
-        import logging
-        logging.getLogger(__name__).warning(
+        _log.warning(
             "clean_results_historical.csv no encontrado en artifacts/. "
             "El endpoint /stats/h2h no estará disponible."
         )
         historical_results = None
+
+    team_goals: dict[str, TeamGoalStats] = {}
+    gs_path = base / "goalscorers.csv"
+    if gs_path.exists() and historical_results is not None:
+        goalscorers_df = pd.read_csv(gs_path)
+        team_goals = build_team_goals_lookup(goalscorers_df, historical_results)
+        _log.info("team_goals cargado: %d equipos desde goalscorers.csv", len(team_goals))
+    else:
+        _log.info("goalscorers.csv no encontrado — predict_score usará fixture_features.")
 
     return MLArtifacts(
         imputer=imputer,
@@ -118,4 +131,5 @@ def load_artifacts() -> MLArtifacts:
         team_elo=team_elo,
         team_name_map=team_name_map,
         historical_results=historical_results,
+        team_goals=team_goals,
     )
