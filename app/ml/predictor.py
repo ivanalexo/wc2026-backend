@@ -180,7 +180,7 @@ def _poisson_win_probs(
 ) -> tuple[float, float, float]:
     """
     Calcula P(home win), P(draw), P(away win) de forma exacta
-    a partir de las PMF de Poisson.  Sin dependencias de scipy.
+    a partir de las PMF de Poisson.
     """
     exp_h = math.exp(-λ_home)
     exp_a = math.exp(-λ_away)
@@ -244,7 +244,7 @@ def _extract_goal_stats(
     Devuelve (home_gf, home_ga, away_gf, away_ga).
 
     Prioridad:
-    1. team_goals (del dataset de goalscorers) si está disponible en artifacts.
+    1. team_goals (del dataset de goalscorers).
     2. Promedios pre-computados del fixture (home_avg_gf, etc.).
     """
     def _feat(key: str) -> float | None:
@@ -293,11 +293,6 @@ def _compute_base_lambdas(
         λ_away = _WC_GOALS_PER_TEAM
 
     return float(np.clip(λ_home, 0.3, 5.0)), float(np.clip(λ_away, 0.3, 5.0))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Feature lookup  (sin cambios)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _get_features(
     home_team: str,
