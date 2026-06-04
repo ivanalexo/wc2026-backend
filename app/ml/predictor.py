@@ -128,16 +128,16 @@ def predict_score(
     home_gf, home_ga, away_gf, away_ga = _extract_goal_stats(
         feature_row, was_inverted, home, away, artifacts
     )
-    λ_home_base, λ_away_base = _compute_base_lambdas(home_gf, home_ga, away_gf, away_ga)
+    lambda_home_base, lambda_away_base = _compute_base_lambdas(home_gf, home_ga, away_gf, away_ga)
 
-    λ_home, λ_away = _calibrate_lambdas(
-        λ_home_base, λ_away_base,
+    lambda_home, lambda_away = _calibrate_lambdas(
+        lambda_home_base, lambda_away_base,
         match_pred.p_home_win, match_pred.p_draw, match_pred.p_away_win,
     )
 
     rng        = np.random.default_rng()
-    home_goals = rng.poisson(λ_home, n_simulations)
-    away_goals = rng.poisson(λ_away, n_simulations)
+    home_goals = rng.poisson(lambda_home, n_simulations)
+    away_goals = rng.poisson(lambda_away, n_simulations)
 
     p_home_win = float((home_goals > away_goals).mean())
     p_draw     = float((home_goals == away_goals).mean())
@@ -164,8 +164,8 @@ def predict_score(
         away_team=away,
         predicted_home_goals=int(best[0]),
         predicted_away_goals=int(best[1]),
-        expected_home_goals=round(λ_home, 2),
-        expected_away_goals=round(λ_away, 2),
+        expected_home_goals=round(lambda_home, 2),
+        expected_away_goals=round(lambda_away, 2),
         p_home_win=round(p_home_win, 4),
         p_draw=round(p_draw, 4),
         p_away_win=round(p_away_win, 4),
@@ -174,19 +174,19 @@ def predict_score(
     )
 
 def _poisson_win_probs(
-    λ_home: float,
-    λ_away: float,
+    lambda_home: float,
+    lambda_away: float,
     max_goals: int = _MAX_GOALS_ANALYTIC,
 ) -> tuple[float, float, float]:
     """
     Calcula P(home win), P(draw), P(away win) de forma exacta
     a partir de las PMF de Poisson.
     """
-    exp_h = math.exp(-λ_home)
-    exp_a = math.exp(-λ_away)
+    exp_h = math.exp(-lambda_home)
+    exp_a = math.exp(-lambda_away)
 
-    pmf_h = [exp_h * (λ_home ** k) / math.factorial(k) for k in range(max_goals + 1)]
-    pmf_a = [exp_a * (λ_away ** k) / math.factorial(k) for k in range(max_goals + 1)]
+    pmf_h = [exp_h * (lambda_home ** k) / math.factorial(k) for k in range(max_goals + 1)]
+    pmf_a = [exp_a * (lambda_away ** k) / math.factorial(k) for k in range(max_goals + 1)]
 
     p_home_win = p_draw = p_away_win = 0.0
     for h, ph in enumerate(pmf_h):
@@ -200,8 +200,8 @@ def _poisson_win_probs(
 
 
 def _calibrate_lambdas(
-    λ_home_base: float,
-    λ_away_base: float,
+    lambda_home_base: float,
+    lambda_away_base: float,
     target_p_home: float,
     target_p_draw: float,
     target_p_away: float,
@@ -209,18 +209,18 @@ def _calibrate_lambdas(
     tol: float = 1e-6,
 ) -> tuple[float, float]:
 
-    λ_total = λ_home_base + λ_away_base
+    lambda_total = lambda_home_base + lambda_away_base
 
     # Empate dominante → lambdas iguales
     if target_p_draw >= target_p_home and target_p_draw >= target_p_away:
-        half = float(np.clip(λ_total / 2.0, 0.3, 5.0))
+        half = float(np.clip(lambda_total / 2.0, 0.3, 5.0))
         return half, half
 
     # Bisección sobre la fracción de goles del local
     lo, hi = 0.01, 0.99
     for _ in range(max_iter):
         mid = (lo + hi) / 2.0
-        p_hw, _, _ = _poisson_win_probs(λ_total * mid, λ_total * (1.0 - mid))
+        p_hw, _, _ = _poisson_win_probs(lambda_total * mid, lambda_total * (1.0 - mid))
         if abs(p_hw - target_p_home) < tol:
             break
         if p_hw < target_p_home:
@@ -229,9 +229,9 @@ def _calibrate_lambdas(
             hi = mid
 
     frac  = (lo + hi) / 2.0
-    λ_home = float(np.clip(λ_total * frac,          0.3, 5.0))
-    λ_away = float(np.clip(λ_total * (1.0 - frac),  0.3, 5.0))
-    return λ_home, λ_away
+    lambda_home = float(np.clip(lambda_total * frac,          0.3, 5.0))
+    lambda_away = float(np.clip(lambda_total * (1.0 - frac),  0.3, 5.0))
+    return lambda_home, lambda_away
 
 def _extract_goal_stats(
     features: dict,
@@ -286,13 +286,13 @@ def _compute_base_lambdas(
     No incluye ajuste ELO
     """
     if all(v is not None for v in [home_gf, home_ga, away_gf, away_ga]):
-        λ_home = (home_gf + away_ga) / 2   # type: ignore[operator]
-        λ_away = (away_gf + home_ga) / 2   # type: ignore[operator]
+        lambda_home = (home_gf + away_ga) / 2   # type: ignore[operator]
+        lambda_away = (away_gf + home_ga) / 2   # type: ignore[operator]
     else:
-        λ_home = _WC_GOALS_PER_TEAM
-        λ_away = _WC_GOALS_PER_TEAM
+        lambda_home = _WC_GOALS_PER_TEAM
+        lambda_away = _WC_GOALS_PER_TEAM
 
-    return float(np.clip(λ_home, 0.3, 5.0)), float(np.clip(λ_away, 0.3, 5.0))
+    return float(np.clip(lambda_home, 0.3, 5.0)), float(np.clip(lambda_away, 0.3, 5.0))
 
 def _get_features(
     home_team: str,
