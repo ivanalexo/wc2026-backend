@@ -11,24 +11,20 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # Aplicación
     app_env: str  = "development"
     app_debug: bool = True
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
-    # Base de datos
     database_url: str
 
-    # CORS — string separado por comas para evitar problemas de parsing
-    # .env: CORS_ORIGINS=http://localhost:3000,https://mi-dominio.com
     cors_origins: str = "http://localhost:3000"
 
     # ML
     artifacts_dir: Path = Path("artifacts")
 
-    # Squads (opcional)
-    football_data_api_key: str | None = None
+    # API Football (https://v3.football.api-sports.io)
+    api_football_key: str | None = None
 
     @property
     def cors_origins_list(self) -> list[str]:
