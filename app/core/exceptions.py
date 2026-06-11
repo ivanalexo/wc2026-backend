@@ -38,6 +38,10 @@ class ArtifactsNotLoadedException(AppException):
     status_code = 503
     detail = "Los modelos ML no están disponibles. Intenta más tarde."
 
+class PlayersNotFoundException(AppException):
+    status_code = 404
+    detail = "No se encontró información de jugadores para este equipo"
+
 def _error_body(status_code: int, detail: str) -> dict:
     return {"error": {"status": status_code, "detail": detail}}
 
