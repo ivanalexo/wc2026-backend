@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # API Football (https://v3.football.api-sports.io)
     api_football_key: str | None = None
 
+    # football-data.org v4  (https://www.football-data.org)
+    football_data_org_key: str | None = None
+
+    # Clave compartida para el endpoint de sync (Railway cron → /api/v1/admin/sync)
+    sync_secret: str | None = None
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]

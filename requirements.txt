@@ -15,6 +15,7 @@ pandas>=2.2.3
 numpy>=2.1.0
 shap>=0.46.0                   # Explicabilidad de predicciones
 
+requests>=2.32.0               # Sync de resultados desde football-data.org
 python-dotenv>=1.0.1           # Lectura del .env en desarrollo
 python-multipart>=0.0.20       # Necesario para form data en FastAPI
 

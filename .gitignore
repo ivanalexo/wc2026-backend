@@ -44,3 +44,5 @@ migrations/__pycache__/
 # Logs
 *.log
 logs/
+
+scripts/sync_results.py

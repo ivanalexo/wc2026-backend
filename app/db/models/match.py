@@ -24,6 +24,9 @@ class Match(Base):
     # Grupo
     group: Mapped[str | None] = mapped_column(String(1))
 
+    # Estado del partido: scheduled | live | finished
+    status: Mapped[str] = mapped_column(String(20), default="scheduled", server_default="scheduled")
+
     # Resultados
     home_score: Mapped[int | None] = mapped_column(Integer)
     away_score: Mapped[int | None] = mapped_column(Integer)
