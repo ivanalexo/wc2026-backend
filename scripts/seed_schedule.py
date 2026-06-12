@@ -18,10 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.db.models.match import Match
 from app.db.session import SessionLocal
 
-# ---------------------------------------------------------------------------
-# Aliases: nombres en el CSV → nombres canónicos en la DB
-# Nota: Curaçao NO se aliasa porque la DB lo almacena con el carácter UTF-8.
-# ---------------------------------------------------------------------------
 CSV_ALIASES: dict[str, str] = {
     "Bosnia & Herzegovina":          "Bosnia and Herzegovina",
     "Bosnia-Herzegovina":            "Bosnia and Herzegovina",
@@ -37,7 +33,6 @@ CSV_ALIASES: dict[str, str] = {
     "Czechia":                       "Czech Republic",
 }
 
-# Stage derivado del texto "TBD Home (Round of 32 #1)" para filas de knockout
 STAGE_KEYWORDS: list[tuple[str, str]] = [
     ("Round of 32",    "Round of 32"),
     ("Round of 16",    "Round of 16"),
@@ -163,9 +158,6 @@ def main(csv_path: Path) -> None:
 
         db.commit()
 
-    # ---------------------------------------------------------------------------
-    # Resumen
-    # ---------------------------------------------------------------------------
     print(f"\nResultados:")
     print(f"  Fechas/horas actualizadas : {updated_date}")
     print(f"  Resultados actualizados   : {updated_score}")

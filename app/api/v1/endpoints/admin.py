@@ -29,7 +29,7 @@ def _verify_secret(x_sync_secret: str | None = Header(default=None)) -> None:
 @router.post(
     "/sync",
     response_model=dict,
-    include_in_schema=False,  # No aparece en Swagger/OpenAPI — solo accesible si conoces la ruta y el secret
+    include_in_schema=False,
 )
 def trigger_sync(
     db: Session = Depends(get_db),
