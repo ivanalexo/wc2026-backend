@@ -13,8 +13,6 @@ from app.schemas import TeamResponse
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Cache en memoria para planteles: {slug: (timestamp, data)}
-# Se invalida automáticamente pasadas 24 horas.
 _SQUAD_CACHE: dict[str, tuple[float, list]] = {}
 _SQUAD_CACHE_TTL = 60 * 60 * 24  # 24 horas en segundos
 

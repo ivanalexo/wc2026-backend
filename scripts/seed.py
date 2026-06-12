@@ -1,12 +1,6 @@
 # =============================================================================
-# seed.py — Poblar la base de datos con equipos y partidos
-# =============================================================================
 # Ejecutar desde la raíz del proyecto (wc2026-backend/):
-#   python seed.py
-#
-# IMPORTANTE: los 72 partidos del fixture son TODOS de fase de grupos
-# (June 11-27). Los partidos de Round of 32 en adelante no están
-# pre-determinados y se agregarán durante el torneo.
+#   python scripts/seed.py
 # =============================================================================
 
 import sys
@@ -14,7 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.db.base import Base
 from app.db.models.match import Match
@@ -23,12 +17,6 @@ from app.db.session import SessionLocal, engine
 
 ARTIFACTS = Path("artifacts")
 
-# =============================================================================
-# Grupos oficiales — sorteo del 5 de diciembre 2025
-# Los nombres deben coincidir EXACTAMENTE con los de clean_fixture_2026.csv.
-# Si algún partido no obtiene grupo, revisa el nombre del equipo en el CSV
-# y agrega un alias en TEAM_ALIASES.
-# =============================================================================
 GROUP_MAP: dict[str, str] = {
     # Group A
     "Mexico":       "A",
@@ -132,11 +120,6 @@ def slugify(name: str) -> str:
         .replace("ô", "o")
     )
 
-
-# =============================================================================
-# Seeders
-# =============================================================================
-
 def seed_teams(db, fixture: pd.DataFrame) -> None:
     """
     Extrae los 48 equipos del fixture, asigna Elo promedio y grupo.
@@ -235,11 +218,6 @@ def seed_matches(db, clean_fixture: pd.DataFrame) -> None:
         for m in no_group:
             print(f"     {m}")
         print("  → Verifica los nombres en GROUP_MAP o agrega un alias en TEAM_ALIASES.")
-
-
-# =============================================================================
-# Main
-# =============================================================================
 
 def main() -> None:
     print("Verificando tablas...")

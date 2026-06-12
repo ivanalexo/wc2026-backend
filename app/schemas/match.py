@@ -15,6 +15,7 @@ class MatchResponse(BaseModel):
     country: str | None
     stage: str | None
     group: str | None
+    status: str
     home_score: int | None
     away_score: int | None
 
