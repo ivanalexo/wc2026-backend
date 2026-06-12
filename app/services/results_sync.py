@@ -55,6 +55,7 @@ TEAM_ALIASES: dict[str, str] = {
     "Türkiye":                       "Turkey",
     "Curacao":                       "Curaçao",
     "Curaçao":                       "Curaçao",
+    "Czechia":                        "Czech Republic",
 }
 
 
