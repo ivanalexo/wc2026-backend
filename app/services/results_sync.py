@@ -47,6 +47,8 @@ TEAM_ALIASES: dict[str, str] = {
     "United States":                 "United States",
     "Bosnia and Herzegovina":        "Bosnia and Herzegovina",
     "Bosnia & Herzegovina":          "Bosnia and Herzegovina",
+    "BIH":                           "Bosnia and Herzegovina",
+    "Bosnia-Herzegovina":            "Bosnia and Herzegovina",
     "DR Congo":                      "DR Congo",
     "Congo DR":                      "DR Congo",
     "Democratic Republic of Congo":  "DR Congo",
