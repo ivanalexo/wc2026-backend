@@ -116,6 +116,7 @@ def regenerate_simulation_task(artifacts: MLArtifacts) -> None:
     db = SessionLocal()
     try:
         regenerate_simulation(db, artifacts)
+    except Exception:
         logger.exception("Fallo en la re-simulación de fondo")
     finally:
         db.close()
