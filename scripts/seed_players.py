@@ -28,6 +28,7 @@ CSV_PATH = Path("artifacts") / "master_fixture_2026.csv"
 
 TEAM_NAME_MAP: dict[str, str] = {
     "Ivory Coast": "Cote d'Ivoire",
+    "Ivory Coast": "Ivory Coast",
     "DR Congo": "Congo DR",
     "United States": "USA",
     "South Korea": "Korea Republic",
