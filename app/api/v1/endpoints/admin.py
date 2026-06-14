@@ -1,11 +1,13 @@
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.dependencies import get_db
+from app.dependencies import get_artifacts, get_db
+from app.ml.loader import MLArtifacts
 from app.services.results_sync import SyncResult, sync_wc_results
+from app.services.simulation_runner import regenerate_simulation_task
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -32,7 +34,9 @@ def _verify_secret(x_sync_secret: str | None = Header(default=None)) -> None:
     include_in_schema=False,
 )
 def trigger_sync(
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    artifacts: MLArtifacts = Depends(get_artifacts),
     _: None = Depends(_verify_secret),
 ) -> dict:
     logger.info("Sync de resultados iniciado via endpoint /admin/sync")
@@ -49,9 +53,18 @@ def trigger_sync(
         "Sync completado — actualizados=%d skipped=%d not_found=%d",
         result.updated, result.skipped, result.not_found,
     )
+
+    # Event-driven: solo re-simulamos si llegaron resultados nuevos.
+    # Corre en background para no bloquear la respuesta del cron.
+    resimulating = result.updated > 0
+    if resimulating:
+        logger.info("Resultados nuevos detectados — encolando re-simulación de fondo")
+        background_tasks.add_task(regenerate_simulation_task, artifacts)
+
     return {
         "updated":            result.updated,
         "skipped":            result.skipped,
         "not_found":          result.not_found,
         "requests_available": result.requests_available,
+        "resimulating":       resimulating,
     }

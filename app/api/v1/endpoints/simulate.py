@@ -1,42 +1,66 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.dependencies import get_artifacts
-from app.ml import montecarlo
-from app.ml.loader import MLArtifacts
+from app.db.models.simulation_result import SimulationResult
+from app.dependencies import get_db
 
 router = APIRouter()
+
+
+def _row_to_dict(r: SimulationResult) -> dict:
+    return {
+        "team": r.team,
+        "elo": r.elo,
+        "p_qualify": r.p_qualify,
+        "p_reach_r16": r.p_reach_r16,
+        "p_reach_qf": r.p_reach_qf,
+        "p_reach_sf": r.p_reach_sf,
+        "p_reach_final": r.p_reach_final,
+        "p_champion": r.p_champion,
+    }
 
 
 @router.get("/simulate/tournament", tags=["Simulation"])
 def get_tournament_simulation(
     top: int = 10,
-    artifacts: MLArtifacts = Depends(get_artifacts),
+    db: Session = Depends(get_db),
 ):
     """
-    Retorna los resultados de la simulación Monte Carlo del torneo completo
-    (10,000 iteraciones pre-calculadas en 05_montecarlo.py).
+    Resultados de la última simulación Monte Carlo (persistida en DB).
 
-    No re-simula en cada request — sirve los resultados ya calculados.
+    Se regenera de forma event-driven cuando /admin/sync detecta resultados
+    nuevos: re-aplica ELO + condiciona la simulación a los partidos jugados.
     Parámetro `top`: cuántos equipos retornar ordenados por P(Campeón).
     """
     top = min(top, 48)
-    results = montecarlo.get_top_n(top, artifacts)
+    rows = db.scalars(
+        select(SimulationResult)
+        .order_by(SimulationResult.p_champion.desc())
+        .limit(top)
+    ).all()
+
+    updated_at = max((r.updated_at for r in rows), default=None) if rows else None
+
     return {
         "simulation": {
-            "n_iterations": 10_000,
-            "source": "pre-computed (05_montecarlo.py)",
+            "n_teams": len(rows),
+            "last_updated": updated_at.isoformat() if updated_at else None,
+            "source": "db (regenerada en cada resultado nuevo)",
         },
-        "top_teams": results,
+        "top_teams": [_row_to_dict(r) for r in rows],
     }
 
 
 @router.get("/simulate/tournament/{team}", tags=["Simulation"])
 def get_team_simulation(
     team: str,
-    artifacts: MLArtifacts = Depends(get_artifacts),
+    db: Session = Depends(get_db),
 ):
-    """Retorna las probabilidades por ronda para un equipo específico."""
-    result = montecarlo.get_team_probabilities(team, artifacts)
-    if result is None:
+    """Probabilidades por ronda para un equipo específico."""
+    row = db.scalar(
+        select(SimulationResult).where(SimulationResult.team.ilike(team))
+    )
+    if row is None:
         return {"team": team, "probabilities": None, "note": "Equipo no encontrado en la simulación."}
-    return {"team": team, "probabilities": result}
+    return {"team": team, "probabilities": _row_to_dict(row)}

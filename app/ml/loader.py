@@ -36,7 +36,6 @@ class MLArtifacts:
     bin_labels: list
     shap_explainer: Any
     fixture_features: pd.DataFrame
-    montecarlo: pd.DataFrame
     team_elo: dict[str, float]
     team_name_map: dict[str, str]
 
@@ -94,7 +93,6 @@ def load_artifacts() -> MLArtifacts:
 
     shap_explainer   = shap.TreeExplainer(model)
     fixture_features = pd.read_csv(_require("master_fixture_2026.csv"), parse_dates=["date"])
-    montecarlo       = pd.read_csv(_require("montecarlo_probabilities.csv"))
 
     team_elo, team_name_map = _build_team_lookups(fixture_features)
 
@@ -127,7 +125,6 @@ def load_artifacts() -> MLArtifacts:
         bin_labels=baseline_data["bin_labels"],
         shap_explainer=shap_explainer,
         fixture_features=fixture_features,
-        montecarlo=montecarlo,
         team_elo=team_elo,
         team_name_map=team_name_map,
         historical_results=historical_results,

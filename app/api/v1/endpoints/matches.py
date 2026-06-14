@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import MatchNotFoundException
 from app.db.models.match import Match
-from app.dependencies import get_db, get_artifacts, get_pagination, Pagination
+from app.dependencies import get_db, get_artifacts, get_live_elo, get_pagination, Pagination
 from app.ml.loader import MLArtifacts
 from app.ml.predictor import predict_match
 from app.schemas import MatchWithPrediction, PredictionSummary
@@ -15,9 +15,17 @@ def _build_prediction_summary(
     home_team: str,
     away_team: str,
     artifacts: MLArtifacts,
+    elo_override: dict[str, float] | None = None,
 ) -> PredictionSummary | None:
-    """Genera el resumen de probabilidades para embeber en cada partido."""
-    result = predict_match(home_team, away_team, artifacts)
+    """
+    Genera el resumen de probabilidades para embeber en cada partido.
+
+    `elo_override` solo debe pasarse para partidos NO finalizados: los pendientes
+    reflejan el ELO vigente, mientras que los jugados se quedan con el ELO base
+    (la predicción original, evitando que el resultado contamine su propia
+    predicción vía el ELO que él mismo modificó).
+    """
+    result = predict_match(home_team, away_team, artifacts, elo_override=elo_override)
     if result is None:
         return None
     best = max(
@@ -40,6 +48,7 @@ def list_fixtures(
     stage: str | None = None,
     db: Session = Depends(get_db),
     artifacts: MLArtifacts = Depends(get_artifacts),
+    live_elo: dict[str, float] = Depends(get_live_elo),
     pagination: Pagination = Depends(get_pagination),
 ):
     """
@@ -58,7 +67,10 @@ def list_fixtures(
     return [
         MatchWithPrediction(
             **{c.name: getattr(m, c.name) for c in Match.__table__.columns},
-            prediction=_build_prediction_summary(m.home_team, m.away_team, artifacts),
+            prediction=_build_prediction_summary(
+                m.home_team, m.away_team, artifacts,
+                elo_override=None if m.status == "finished" else live_elo,
+            ),
         )
         for m in matches
     ]
@@ -69,6 +81,7 @@ def get_fixture(
     match_id: int,
     db: Session = Depends(get_db),
     artifacts: MLArtifacts = Depends(get_artifacts),
+    live_elo: dict[str, float] = Depends(get_live_elo),
 ):
     """Retorna el detalle de un partido con su predicción."""
     match = db.query(Match).filter(Match.id == match_id).first()
@@ -77,5 +90,8 @@ def get_fixture(
 
     return MatchWithPrediction(
         **{c.name: getattr(match, c.name) for c in Match.__table__.columns},
-        prediction=_build_prediction_summary(match.home_team, match.away_team, artifacts),
+        prediction=_build_prediction_summary(
+            match.home_team, match.away_team, artifacts,
+            elo_override=None if match.status == "finished" else live_elo,
+        ),
     )

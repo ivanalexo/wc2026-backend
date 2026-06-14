@@ -15,7 +15,7 @@ dist/
 build/
 .eggs/
 
-# Variables de entorno (NUNCA versionar .env real)
+# Variables de entorno
 .env
 .env.local
 .env.production
@@ -35,7 +35,6 @@ htmlcov/
 *.swp
 *.swo
 
-# Alembic (solo versionar las migraciones, no el cache)
 migrations/__pycache__/
 
 # macOS
