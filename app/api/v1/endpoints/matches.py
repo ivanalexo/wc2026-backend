@@ -46,6 +46,7 @@ def _build_prediction_summary(
 def list_fixtures(
     group: str | None = None,
     stage: str | None = None,
+    upcoming: bool = False,
     db: Session = Depends(get_db),
     artifacts: MLArtifacts = Depends(get_artifacts),
     live_elo: dict[str, float] = Depends(get_live_elo),
@@ -53,7 +54,8 @@ def list_fixtures(
 ):
     """
     Lista los 72 partidos del Mundial 2026 con probabilidades embebidas.
-    Filtros opcionales: group (A-L) y stage (ej: 'Group Stage').
+    Filtros opcionales: group (A-L), stage (ej: 'Group Stage') y
+    upcoming (excluye partidos ya finalizados, mostrando solo los próximos).
     """
     query = db.query(Match).order_by(Match.date)
 
@@ -61,6 +63,8 @@ def list_fixtures(
         query = query.filter(Match.group == group.upper())
     if stage:
         query = query.filter(Match.stage == stage)
+    if upcoming:
+        query = query.filter(Match.status != "finished")
 
     matches = query.offset(pagination.skip).limit(pagination.limit).all()
 
