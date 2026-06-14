@@ -54,20 +54,33 @@ def resolve_team_name(name: str, artifacts: MLArtifacts) -> str:
     return artifacts.team_name_map.get(name.strip().lower(), name.strip())
 
 
-def get_team_elo(name: str, artifacts: MLArtifacts) -> float | None:
-    """Busca el Elo de un equipo de forma case-insensitive."""
-    return artifacts.team_elo.get(name.strip().lower())
+def get_team_elo(
+    name: str,
+    artifacts: MLArtifacts,
+    elo_override: dict[str, float] | None = None,
+) -> float | None:
+    """
+    Busca el Elo de un equipo (case-insensitive).
+
+    Si `elo_override` (ELO vigente recalculado tras partidos jugados) trae al
+    equipo.
+    """
+    key = name.strip().lower()
+    if elo_override and key in elo_override:
+        return elo_override[key]
+    return artifacts.team_elo.get(key)
 
 def predict_match(
     home_team: str,
     away_team: str,
     artifacts: MLArtifacts,
     is_neutral: bool = True,
+    elo_override: dict[str, float] | None = None,
 ) -> MatchPrediction | None:
     home = resolve_team_name(home_team, artifacts)
     away = resolve_team_name(away_team, artifacts)
 
-    feature_row, was_inverted = _get_features(home, away, artifacts, is_neutral)
+    feature_row, was_inverted = _get_features(home, away, artifacts, is_neutral, elo_override)
     if feature_row is None:
         return None
 
@@ -89,8 +102,8 @@ def predict_match(
         key=lambda k: {"H": p_home_win, "D": p_draw, "A": p_away_win}[k],
     )
 
-    home_elo = get_team_elo(home, artifacts)
-    away_elo = get_team_elo(away, artifacts)
+    home_elo = get_team_elo(home, artifacts, elo_override)
+    away_elo = get_team_elo(away, artifacts, elo_override)
     elo_diff = (home_elo - away_elo) if (home_elo and away_elo) else None
 
     return MatchPrediction(
@@ -113,15 +126,16 @@ def predict_score(
     artifacts: MLArtifacts,
     is_neutral: bool = True,
     n_simulations: int = N_SIMULATIONS,
+    elo_override: dict[str, float] | None = None,
 ) -> ScorePrediction | None:
     home = resolve_team_name(home_team, artifacts)
     away = resolve_team_name(away_team, artifacts)
 
-    feature_row, was_inverted = _get_features(home, away, artifacts, is_neutral)
+    feature_row, was_inverted = _get_features(home, away, artifacts, is_neutral, elo_override)
     if feature_row is None:
         return None
 
-    match_pred = predict_match(home, away, artifacts, is_neutral)
+    match_pred = predict_match(home, away, artifacts, is_neutral, elo_override)
     if match_pred is None:
         return None
 
@@ -299,19 +313,20 @@ def _get_features(
     away_team: str,
     artifacts: MLArtifacts,
     is_neutral: bool,
+    elo_override: dict[str, float] | None = None,
 ) -> tuple[dict | None, bool]:
     fixture = artifacts.fixture_features
 
     row = _lookup_fixture(fixture, home_team, away_team)
     if row is not None:
-        return _row_to_dict(row), False
+        return _apply_elo_override(_row_to_dict(row), home_team, away_team, False, artifacts, elo_override), False
 
     row = _lookup_fixture(fixture, away_team, home_team)
     if row is not None:
-        return _row_to_dict(row), True
+        return _apply_elo_override(_row_to_dict(row), home_team, away_team, True, artifacts, elo_override), True
 
-    home_elo_real = get_team_elo(home_team, artifacts)
-    away_elo_real = get_team_elo(away_team, artifacts)
+    home_elo_real = get_team_elo(home_team, artifacts, elo_override)
+    away_elo_real = get_team_elo(away_team, artifacts, elo_override)
 
     if home_elo_real is None and away_elo_real is None:
         return None, False
@@ -328,6 +343,30 @@ def _get_features(
     feature_dict["is_neutral"]    = int(is_neutral)
 
     return feature_dict, False
+
+
+def _apply_elo_override(
+    feature_row: dict,
+    home_team: str,
+    away_team: str,
+    was_inverted: bool,
+    artifacts: MLArtifacts,
+    elo_override: dict[str, float] | None,
+) -> dict:
+    if not elo_override:
+        return feature_row
+
+    # En la fila del fixture, el "home" efectivo es away_team si está invertida.
+    eff_home, eff_away = (away_team, home_team) if was_inverted else (home_team, away_team)
+    elo_h = get_team_elo(eff_home, artifacts, elo_override)
+    elo_a = get_team_elo(eff_away, artifacts, elo_override)
+    if elo_h is None or elo_a is None:
+        return feature_row
+
+    elo_diff = elo_h - elo_a
+    feature_row["elo_diff"]      = elo_diff
+    feature_row["elo_prob_home"] = 1 / (1 + 10 ** (-elo_diff / 400))
+    return feature_row
 
 
 def _lookup_fixture(fixture: pd.DataFrame, home: str, away: str) -> pd.Series | None:

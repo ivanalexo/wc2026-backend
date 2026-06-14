@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import PredictionUnavailableException
 from app.db.models.predictions_cache import PredictionsCache
-from app.dependencies import get_db, get_artifacts
+from app.dependencies import get_db, get_artifacts, get_live_elo
 from app.ml.explainer import explain_prediction
 from app.ml.loader import MLArtifacts
 from app.ml.predictor import predict_match, predict_score, resolve_team_name, get_team_elo
@@ -45,6 +45,7 @@ def predict_match_endpoint(
     body: PredictionRequest,
     db: Session = Depends(get_db),
     artifacts: MLArtifacts = Depends(get_artifacts),
+    elo_override: dict[str, float] = Depends(get_live_elo),
 ):
     """
     Predice el resultado de un partido (H/D/A) usando el modelo XGBoost.
@@ -72,14 +73,14 @@ def predict_match_endpoint(
             p_draw=cached.p_draw,
             p_away_win=cached.p_away_win,
             prediction=cached.prediction,
-            home_elo=get_team_elo(home, artifacts),
-            away_elo=get_team_elo(away, artifacts),
+            home_elo=get_team_elo(home, artifacts, elo_override),
+            away_elo=get_team_elo(away, artifacts, elo_override),
             elo_diff=None,
             explanation=explanation,
             cached=True,
         )
 
-    result = predict_match(home, away, artifacts)
+    result = predict_match(home, away, artifacts, elo_override=elo_override)
     if result is None:
         raise PredictionUnavailableException(
             f"No hay datos de Elo para '{home}' o '{away}'"
@@ -126,11 +127,14 @@ def predict_match_endpoint(
 def predict_score_endpoint(
     body: PredictionRequest,
     artifacts: MLArtifacts = Depends(get_artifacts),
+    elo_override: dict[str, float] = Depends(get_live_elo),
 ):
     """
     Predice el marcador más probable usando Poisson + Monte Carlo.
     """
-    result = predict_score(body.home_team, body.away_team, artifacts)
+    result = predict_score(
+        body.home_team, body.away_team, artifacts, elo_override=elo_override
+    )
     if result is None:
         raise PredictionUnavailableException(
             f"No hay datos suficientes para '{body.home_team}' vs '{body.away_team}'"

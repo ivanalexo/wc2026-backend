@@ -1,7 +1,3 @@
-# =============================================================================
-# app/ml/explainer.py — SHAP values → lenguaje natural
-# =============================================================================
-
 from __future__ import annotations
 
 import numpy as np
@@ -48,17 +44,14 @@ def _extract_shap_for_class(shap_values, class_idx: int) -> np.ndarray:
     Retorna siempre un vector 1D de shape (n_features,).
     """
     if isinstance(shap_values, list):
-        # Formato antiguo: lista de (n_samples, n_features)
         return np.array(shap_values[class_idx][0])
 
     arr = np.array(shap_values)
 
     if arr.ndim == 3:
-        # Formato nuevo: (n_samples, n_features, n_classes)
         return arr[0, :, class_idx]
 
     if arr.ndim == 2:
-        # Array 2D: (n_samples, n_features) — modelo binario o single output
         return arr[0]
 
     # Fallback: ya es 1D
@@ -97,7 +90,6 @@ def explain_prediction(
         labels = _FEATURE_LABELS.get(feature, (feature, feature))
         factors.append(labels[0] if shap_val >= 0 else labels[1])
 
-    # Factor principal como frase completa
     main_feature, main_val = ranked[0]
     main_labels = _FEATURE_LABELS.get(main_feature, (main_feature, main_feature))
     main_label  = main_labels[0] if main_val >= 0 else main_labels[1]
