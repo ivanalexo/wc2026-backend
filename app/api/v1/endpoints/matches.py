@@ -24,7 +24,12 @@ def _build_prediction_summary(
     reflejan el ELO vigente, mientras que los jugados se quedan con el ELO base
     (la predicción original, evitando que el resultado contamine su propia
     predicción vía el ELO que él mismo modificó).
+
+    Devuelve None si el partido aún no tiene ambos equipos definidos (slots de
+    eliminatoria sin resolver).
     """
+    if not home_team or not away_team:
+        return None
     result = predict_match(home_team, away_team, artifacts, elo_override=elo_override)
     if result is None:
         return None
@@ -53,7 +58,9 @@ def list_fixtures(
     pagination: Pagination = Depends(get_pagination),
 ):
     """
-    Lista los 72 partidos del Mundial 2026 con probabilidades embebidas.
+    Lista los 104 partidos del Mundial 2026 con probabilidades embebidas.
+    Los partidos de eliminatoria sin equipos definidos traen home_team/away_team
+    en null y los slots (home_slot/away_slot) indican el cruce pendiente.
     Filtros opcionales: group (A-L), stage (ej: 'Group Stage') y
     upcoming (excluye partidos ya finalizados, mostrando solo los próximos).
     """

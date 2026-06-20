@@ -113,7 +113,7 @@ def seed_knockout_matches(db) -> None:
             ))
             added += 1
 
-    print(f"  Knockout → {added} nuevos | {updated} actualizados | {skipped} sin cambios")
+    print(f"Knockout → {added} nuevos | {updated} actualizados | {skipped} sin cambios")
 
 
 def main() -> None:

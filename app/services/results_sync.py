@@ -191,4 +191,17 @@ def sync_wc_results(db: Session) -> SyncResult:
             result.skipped += 1
 
     db.commit()
+
+    # Tras actualizar resultados, intentar resolver el bracket (idempotente).
+    # Un fallo aquí no debe invalidar el sync ya commiteado.
+    try:
+        from app.services.bracket_resolver import resolve_bracket
+        bracket = resolve_bracket(db)
+        logger.info(
+            "Resolver bracket: grupos=%d/12 slots=%d knockout=%d",
+            bracket.groups_resolved, bracket.slots_filled, bracket.knockout_propagated,
+        )
+    except Exception:
+        logger.exception("Error resolviendo el bracket tras el sync")
+
     return result
