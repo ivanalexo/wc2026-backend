@@ -1,10 +1,3 @@
-"""
-Sincroniza resultados del Mundial 2026 desde football-data.org v4.
-
-Documentación de rate limiting (cabeceras de respuesta):
-  X-RequestsAvailable     — requests restantes antes de ser bloqueado
-  X-RequestCounter-Reset  — segundos hasta que el contador se reinicia
-"""
 import logging
 import time
 from dataclasses import dataclass
@@ -18,14 +11,10 @@ from app.db.models.match import Match
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constantes
-# ---------------------------------------------------------------------------
 BASE_URL        = "https://api.football-data.org/v4"
 WC_CODE         = "WC"           # código de la FIFA World Cup en football-data.org
 MIN_REQUESTS_OK = 2              # umbral mínimo de requests disponibles antes de pausar
 
-# Estado football-data.org → nuestro status
 STATUS_MAP: dict[str, str] = {
     "FINISHED":   "finished",
     "IN_PLAY":    "live",
@@ -38,8 +27,6 @@ STATUS_MAP: dict[str, str] = {
     "AWARDED":    "finished",
 }
 
-# Nombres de equipos en football-data.org → nombres canónicos en nuestra DB
-# Ajustar conforme veamos diferencias reales durante el torneo
 TEAM_ALIASES: dict[str, str] = {
     "Korea Republic":                "South Korea",
     "Republic of Korea":             "South Korea",
@@ -60,9 +47,6 @@ TEAM_ALIASES: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Resultado del sync
-# ---------------------------------------------------------------------------
 @dataclass
 class SyncResult:
     updated: int = 0
@@ -71,21 +55,32 @@ class SyncResult:
     error: str | None = None
     requests_available: int | None = None
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def _resolve(name: str) -> str:
     return TEAM_ALIASES.get(name.strip(), name.strip())
 
 
 def _find_match(db: Session, home: str, away: str) -> tuple[Match | None, bool]:
-    """Busca partido por (home, away); si no encuentra prueba orden invertido."""
     m = db.query(Match).filter(Match.home_team == home, Match.away_team == away).first()
     if m:
         return m, False
     m = db.query(Match).filter(Match.home_team == away, Match.away_team == home).first()
-    return (m, True) if m else (None, False)
+    if m:
+        return m, True
+
+    m = db.query(Match).filter(Match.away_slot == "3rd", Match.home_team == home).first()
+    if m:
+        if m.away_team != away:
+            logger.info("Adoptando tercero real del API en match %s: %s", m.match_number, away)
+            m.away_team = away
+        return m, False
+    m = db.query(Match).filter(Match.away_slot == "3rd", Match.home_team == away).first()
+    if m:
+        if m.away_team != home:
+            logger.info("Adoptando tercero real del API en match %s: %s", m.match_number, home)
+            m.away_team = home
+        return m, True
+
+    return None, False
 
 
 def _check_rate_limit(headers: dict) -> None:
@@ -102,9 +97,6 @@ def _check_rate_limit(headers: dict) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
-# Función principal de sync
-# ---------------------------------------------------------------------------
 def sync_wc_results(db: Session) -> SyncResult:
     """
     Llama a football-data.org y actualiza status/scores en la DB.
@@ -116,7 +108,6 @@ def sync_wc_results(db: Session) -> SyncResult:
 
     headers = {"X-Auth-Token": key}
 
-    # Traer solo partidos FINISHED y IN_PLAY para minimizar requests
     url = f"{BASE_URL}/competitions/{WC_CODE}/matches"
     params = {"status": "FINISHED,IN_PLAY,PAUSED"}
 
@@ -156,6 +147,7 @@ def sync_wc_results(db: Session) -> SyncResult:
         score_full = m_api.get("score", {}).get("fullTime", {})
         api_home_score = score_full.get("home")
         api_away_score = score_full.get("away")
+        api_winner = m_api.get("score", {}).get("winner")
 
         match, is_reversed = _find_match(db, api_home, api_away)
 
@@ -175,6 +167,21 @@ def sync_wc_results(db: Session) -> SyncResult:
                 match.away_score = db_away_score
                 changed = True
 
+        if (
+            api_home_score is not None
+            and api_away_score is not None
+            and api_home_score == api_away_score
+        ):
+            if api_winner == "HOME_TEAM":
+                new_winner = "AWAY" if is_reversed else "HOME"
+            elif api_winner == "AWAY_TEAM":
+                new_winner = "HOME" if is_reversed else "AWAY"
+            else:
+                new_winner = None
+            if new_winner and match.winner != new_winner:
+                match.winner = new_winner
+                changed = True
+
         if match.status != api_status:
             match.status = api_status
             changed = True
@@ -191,4 +198,15 @@ def sync_wc_results(db: Session) -> SyncResult:
             result.skipped += 1
 
     db.commit()
+
+    try:
+        from app.services.bracket_resolver import resolve_bracket
+        bracket = resolve_bracket(db)
+        logger.info(
+            "Resolver bracket: grupos=%d/12 slots=%d knockout=%d",
+            bracket.groups_resolved, bracket.slots_filled, bracket.knockout_propagated,
+        )
+    except Exception:
+        logger.exception("Error resolviendo el bracket tras el sync")
+
     return result

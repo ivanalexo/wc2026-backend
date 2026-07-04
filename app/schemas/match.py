@@ -8,8 +8,12 @@ class MatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    home_team: str
-    away_team: str
+    match_number: int | None = None
+    # NULL en partidos de eliminatoria aún sin equipo definido; ver home_slot/away_slot.
+    home_team: str | None = None
+    away_team: str | None = None
+    home_slot: str | None = None
+    away_slot: str | None = None
     date: datetime
     city: str | None
     country: str | None
@@ -18,6 +22,7 @@ class MatchResponse(BaseModel):
     status: str
     home_score: int | None
     away_score: int | None
+    winner: str | None = None
 
 class MatchWithPrediction(MatchResponse):
     prediction: PredictionSummary | None = None

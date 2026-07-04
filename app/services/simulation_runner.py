@@ -38,11 +38,10 @@ def _finished_matches(db: Session) -> list[Match]:
 
 
 def build_played_results(matches: list[Match]) -> dict[frozenset, dict]:
-    """
-    Guarda la orientación real (quién fue local) para asignar bien los goles.
-    """
     played: dict[frozenset, dict] = {}
     for m in matches:
+        if m.stage != "Group Stage":
+            continue
         key = frozenset((m.home_team, m.away_team))
         if m.home_team == m.away_team or len(key) != 2:
             continue
@@ -66,7 +65,6 @@ def regenerate_simulation(
     """
     finished = _finished_matches(db)
 
-    # ELO vigente = base congelado + replay cronológico
     base_elo = base_team_elo(artifacts)
     replay = [
         FinishedMatch(m.home_team, m.away_team, int(m.home_score), int(m.away_score))
@@ -74,13 +72,11 @@ def regenerate_simulation(
     ]
     current_elo = recompute_elo(base_elo, replay)
 
-    # Simulación condicionada con el ELO actualizado
     played = build_played_results(finished)
     logger.info("Re-simulando: %d jugados, n=%d", len(played), n_simulations)
     ctx = build_context(artifacts, elo_override=current_elo)
     df = run_simulation(artifacts, played_results=played, n_simulations=n_simulations, ctx=ctx)
 
-    # Persistir probabilidades (reemplazo completo de la tabla)
     db.query(SimulationResult).delete()
     db.bulk_save_objects([
         SimulationResult(
@@ -96,12 +92,10 @@ def regenerate_simulation(
         for _, row in df.iterrows()
     ])
 
-    # Actualizar ELO vigente en teams (para el front)
     for team in db.scalars(select(Team)):
         if team.name in current_elo:
             team.elo_rating = round(float(current_elo[team.name]), 1)
 
-    # Vaciar caché de predicciones (ELO cambió → predicciones viejas obsoletas)
     db.query(PredictionsCache).delete()
 
     db.commit()
