@@ -38,6 +38,8 @@ class Match(Base):
     home_score: Mapped[int | None] = mapped_column(Integer)
     away_score: Mapped[int | None] = mapped_column(Integer)
 
+    winner: Mapped[str | None] = mapped_column(String(4))
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     def __repr__(self) -> str:

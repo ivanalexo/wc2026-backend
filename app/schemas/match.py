@@ -22,6 +22,7 @@ class MatchResponse(BaseModel):
     status: str
     home_score: int | None
     away_score: int | None
+    winner: str | None = None
 
 class MatchWithPrediction(MatchResponse):
     prediction: PredictionSummary | None = None

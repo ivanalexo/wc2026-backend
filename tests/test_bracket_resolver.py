@@ -100,6 +100,24 @@ def test_draw_without_penalties_does_not_propagate(db):
     assert m.home_team is None   # empate sin penales → no se propaga
 
 
+def test_draw_with_winner_propagates(db):
+    """Empate en KO con `winner` (penales/prórroga) sí propaga ganador y perdedor."""
+    db.add_all([
+        Match(match_number=103, home_team="P", away_team="Q",
+              home_score=1, away_score=1, winner="AWAY", date=DT,
+              stage="Quarter-finals", status="finished"),
+        Match(match_number=92, home_slot="W103", away_slot="L103",
+              date=DT, stage="Round of 16", status="scheduled"),
+    ])
+    db.commit()
+
+    resolve_bracket(db)
+
+    m = db.query(Match).filter(Match.match_number == 92).one()
+    assert m.home_team == "Q"   # ganador por penales (AWAY)
+    assert m.away_team == "P"   # perdedor
+
+
 def test_resolver_is_idempotent(db):
     _seed_group_a(db)
     db.add(Match(match_number=73, home_slot="1A", away_slot="2A",
