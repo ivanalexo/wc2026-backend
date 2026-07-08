@@ -10,8 +10,15 @@ class Match(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    home_team: Mapped[str] = mapped_column(String(100), index=True)
-    away_team: Mapped[str] = mapped_column(String(100), index=True)
+    match_number: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
+
+    # NULL hasta que el resolver del bracket determine qué equipo ocupa el slot.
+    home_team: Mapped[str | None] = mapped_column(String(100), index=True)
+    away_team: Mapped[str | None] = mapped_column(String(100), index=True)
+
+    # Slot del bracket: "1A", "2B", "3rd", "W74", "L101". NULL en fase de grupos.
+    home_slot: Mapped[str | None] = mapped_column(String(10))
+    away_slot: Mapped[str | None] = mapped_column(String(10))
 
     date: Mapped[datetime] = mapped_column(index=True)
 
@@ -30,6 +37,8 @@ class Match(Base):
     # Resultados
     home_score: Mapped[int | None] = mapped_column(Integer)
     away_score: Mapped[int | None] = mapped_column(Integer)
+
+    winner: Mapped[str | None] = mapped_column(String(4))
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

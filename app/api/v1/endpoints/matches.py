@@ -6,9 +6,11 @@ from app.db.models.match import Match
 from app.dependencies import get_db, get_artifacts, get_live_elo, get_pagination, Pagination
 from app.ml.loader import MLArtifacts
 from app.ml.predictor import predict_match
-from app.schemas import MatchWithPrediction, PredictionSummary
+from app.schemas import MatchResponse, MatchWithPrediction, PredictionSummary
 
 router = APIRouter()
+
+FIRST_KNOCKOUT_MATCH = 73
 
 
 def _build_prediction_summary(
@@ -24,7 +26,12 @@ def _build_prediction_summary(
     reflejan el ELO vigente, mientras que los jugados se quedan con el ELO base
     (la predicción original, evitando que el resultado contamine su propia
     predicción vía el ELO que él mismo modificó).
+
+    Devuelve None si el partido aún no tiene ambos equipos definidos (slots de
+    eliminatoria sin resolver).
     """
+    if not home_team or not away_team:
+        return None
     result = predict_match(home_team, away_team, artifacts, elo_override=elo_override)
     if result is None:
         return None
@@ -53,7 +60,9 @@ def list_fixtures(
     pagination: Pagination = Depends(get_pagination),
 ):
     """
-    Lista los 72 partidos del Mundial 2026 con probabilidades embebidas.
+    Lista los 104 partidos del Mundial 2026 con probabilidades embebidas.
+    Los partidos de eliminatoria sin equipos definidos traen home_team/away_team
+    en null y los slots (home_slot/away_slot) indican el cruce pendiente.
     Filtros opcionales: group (A-L), stage (ej: 'Group Stage') y
     upcoming (excluye partidos ya finalizados, mostrando solo los próximos).
     """
@@ -78,6 +87,24 @@ def list_fixtures(
         )
         for m in matches
     ]
+
+
+@router.get("/bracket", response_model=list[MatchResponse], tags=["Fixtures"])
+def get_bracket(db: Session = Depends(get_db)):
+    """
+    Devuelve los 32 partidos de eliminatoria (match_number 73–104) ordenados,
+    con sus slots (home_slot/away_slot) para reconstruir el cuadro en el frontend.
+
+    No computa predicciones (la vista de Llave no las usa); es ligero a propósito.
+    Los partidos sin equipos resueltos traen home_team/away_team en null.
+    """
+    matches = (
+        db.query(Match)
+        .filter(Match.match_number >= FIRST_KNOCKOUT_MATCH)
+        .order_by(Match.match_number)
+        .all()
+    )
+    return matches
 
 
 @router.get("/fixtures/{match_id}", response_model=MatchWithPrediction, tags=["Fixtures"])
